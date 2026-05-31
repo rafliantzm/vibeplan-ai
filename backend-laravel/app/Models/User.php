@@ -13,6 +13,7 @@ class User extends Authenticatable
 
     protected $fillable = [
         'name',
+        'display_name',
         'email',
         'password_hash',
         'avatar_url',
@@ -34,6 +35,7 @@ class User extends Authenticatable
             'updated_at' => 'datetime',
             'avatar_url' => 'string',
             'avatar_path' => 'string',
+            'display_name' => 'string',
         ];
     }
 

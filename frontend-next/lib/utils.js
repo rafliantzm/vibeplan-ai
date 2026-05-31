@@ -96,7 +96,78 @@ export function getGenerationResponseId(response) {
   );
 }
 
-export function extractFilename(headers, fallbackName = "vibeplan-result.md") {
+export function slugifyFilename(value) {
+  return String(value || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+export function cleanProjectTitle(value) {
+  return String(value || "")
+    .replace(/^#+\s*/g, "")
+    .replace(/^(prd|product requirements document|next step planner|coding prompt generator|coding prompt|roadmap)\s*[-:|]\s*/i, "")
+    .replace(/\s*[-:|]\s*(prd|product requirements document|next step planner|coding prompt generator|coding prompt|roadmap)$/i, "")
+    .replace(/\bproduct requirements document\b/gi, "")
+    .replace(/\bnext step planner\b/gi, "")
+    .replace(/\bcoding prompt generator\b/gi, "")
+    .replace(/\bcoding prompts?\b/gi, "")
+    .replace(/\broadmap\b/gi, "")
+    .replace(/\bprd\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function buildMarkdownFilename(result) {
+  const rawTitle =
+    result?.project?.project_name ||
+    result?.project_name ||
+    result?.projectName ||
+    result?.json_content?.project_name ||
+    result?.json_content?.input_snapshot?.project_name ||
+    result?.metadata?.project_name ||
+    result?.metadata?.projectTitle ||
+    result?.input?.project_name ||
+    result?.title ||
+    "vibeplan";
+
+  const cleanTitle = cleanProjectTitle(rawTitle) || "vibeplan";
+  const slug = slugifyFilename(cleanTitle) || "vibeplan";
+
+  const type =
+    result?.generation_type ||
+    result?.generationType ||
+    result?.type ||
+    result?.json_content?.generation_type ||
+    result?.metadata?.generation_type ||
+    result?.metadata?.generationType ||
+    "";
+
+  const normalizedType = String(type).toLowerCase();
+
+  const suffixMap = {
+    prd: "prd",
+    prd_generator: "prd",
+    "prd-generator": "prd",
+    "next-step": "next-step-planner",
+    next_step: "next-step-planner",
+    next_step_planner: "next-step-planner",
+    "next-step-planner": "next-step-planner",
+    "coding-prompt": "coding-prompt",
+    coding_prompt: "coding-prompt",
+    coding_prompt_generator: "coding-prompt",
+    "coding-prompt-generator": "coding-prompt",
+  };
+
+  const suffix = suffixMap[normalizedType] || "result";
+
+  return `${slug}-${suffix}.md`;
+}
+
+export function extractFilename(headers, fallbackName = "vibeplan.md") {
   const disposition = headers.get("content-disposition") || "";
   const match = disposition.match(/filename="?([^"]+)"?/i);
   return match?.[1] || fallbackName;

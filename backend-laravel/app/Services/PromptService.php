@@ -20,6 +20,21 @@ class PromptService
     private function buildPrdPrompt(Project $project, bool $compact = false, array $context = []): string
     {
         $conciseRetry = (bool) ($context['concise_retry'] ?? false);
+        $architecture = $this->resolveArchitectureContext((string) ($project->tech_stack ?? ''));
+        $projectName = $this->formatPromptValue($project->project_name);
+        $projectIdea = $this->formatPromptValue($project->project_idea);
+        $targetUser = $this->formatPromptValue($project->target_user);
+        $mainProblem = $this->formatPromptValue($project->main_problem);
+        $appType = $this->formatPromptValue($project->app_type);
+        $techStack = $this->formatPromptValue($project->tech_stack);
+        $skillLevel = $this->formatPromptValue($project->skill_level);
+        $initialNotes = $this->formatPromptValue($project->initial_prd);
+        $frontendStack = $architecture['frontend'];
+        $backendStack = $architecture['backend'];
+        $databaseStack = $architecture['database'];
+        $techStackNotes = $architecture['notes'];
+        $storageStructure = $this->resolveStorageStructureTerm($databaseStack);
+        $storedDataDescription = $this->resolveStoredDataDescription($databaseStack, $storageStructure);
 
         if ($compact) {
             return <<<PROMPT
@@ -39,33 +54,36 @@ Use exactly these 8 top-level sections in this order:
 - Development Phases
 
 Project context:
-- Project Name: {$project->project_name}
-- Project Idea: {$project->project_idea}
-- Target User: {$project->target_user}
-- Main Problem: {$project->main_problem}
-- App Type: {$project->app_type}
-- Tech Stack: {$project->tech_stack}
-- Skill Level: {$project->skill_level}
-- Initial Notes: {$project->initial_prd}
+- Project Name: {$projectName}
+- Project Idea: {$projectIdea}
+- Target User: {$targetUser}
+- Main Problem: {$mainProblem}
+- App Type: {$appType}
+- Tech Stack (raw): {$techStack}
+- Frontend Stack: {$frontendStack}
+- Backend Stack: {$backendStack}
+- Database Stack: {$databaseStack}
+- Tech Stack Notes: {$techStackNotes}
+- Skill Level: {$skillLevel}
+- Initial Notes: {$initialNotes}
 
 Rules:
 - MVP-first, concise, no long theory.
-- Stack: Next.js frontend, Laravel REST API backend, MongoDB, mongodb/laravel-mongodb, Groq/OpenRouter.
-- Mention history and Markdown `.md` download.
-- Frontend calls Laravel API only.
-- AI API keys stay in backend `.env`.
-- Do not mention Mongoose.
-- Do not require Redux for MVP.
-- ERD must be one Mermaid `erDiagram`.
-- Relationship must be exactly: PROJECTS ||--o{ AI_GENERATIONS : has
-- TEAM_MEMBERS must stay standalone.
-- Development phases must include:
-  - Project setup
-  - Laravel backend API
-  - MongoDB integration
-  - AI integration
-  - Next.js frontend integration
-  - Testing, polish, and demo preparation
+- Architecture wajib mengikuti input Tech Stack dari user.
+- Jangan menggunakan stack internal aplikasi generator.
+- Jangan menulis Next.js, Laravel, MongoDB, Groq, OpenRouter, atau AI_GENERATIONS kecuali memang disebutkan oleh user.
+- Jangan mengganti React.js menjadi Next.js, Node.js menjadi Laravel, atau Supabase PostgreSQL menjadi MongoDB.
+- Jika salah satu stack kosong, tulis "Belum ditentukan" dan jangan mengarang framework baru.
+- Architecture section must explicitly list:
+  - Frontend: {$frontendStack}
+  - Backend: {$backendStack}
+  - Database: {$databaseStack}
+  - Stored Data: {$storedDataDescription}
+- Stored Data must use "{$storageStructure}" terminology that matches the selected database.
+- Core Features must be derived from project idea, user problem, app type, and initial notes. Do not reuse VibePlan AI features.
+- User Flow must describe the user's product flow, not the generator application's flow.
+- ERD must be one Mermaid `erDiagram` adapted to the user's project domain, not VibePlan AI collections.
+- Development phases must follow the selected stack and MVP scope of the user's project.
 PROMPT;
         }
 
@@ -90,75 +108,221 @@ Use exactly these 8 top-level sections in this order:
 8. Development Phases
 
 Project context:
-- Project Name: {$project->project_name}
-- Project Idea: {$project->project_idea}
-- Target User: {$project->target_user}
-- Main Problem: {$project->main_problem}
-- App Type: {$project->app_type}
-- Tech Stack: {$project->tech_stack}
-- Skill Level: {$project->skill_level}
-- Initial Notes: {$project->initial_prd}
+- Project Name: {$projectName}
+- Project Idea: {$projectIdea}
+- Target User: {$targetUser}
+- Main Problem: {$mainProblem}
+- App Type: {$appType}
+- Tech Stack (raw): {$techStack}
+- Frontend Stack: {$frontendStack}
+- Backend Stack: {$backendStack}
+- Database Stack: {$databaseStack}
+- Tech Stack Notes: {$techStackNotes}
+- Skill Level: {$skillLevel}
+- Initial Notes: {$initialNotes}
 
 Requirements:
 - Scope must stay MVP-first and practical.
-- Mention the actual stack:
-  - Next.js frontend
-  - Laravel REST API backend
-  - MongoDB database
-  - mongodb/laravel-mongodb package
-  - Groq/OpenRouter AI API
-- Mention saved history and downloadable `.md` results.
-- Do not mention Mongoose.
-- Do not require Redux for MVP; local state or Context API is enough.
+- Architecture wajib mengikuti input Tech Stack dari user. Jangan menggunakan stack internal aplikasi generator.
+- Jangan menulis Next.js, Laravel, MongoDB, Groq, OpenRouter, atau AI_GENERATIONS kecuali memang disebutkan oleh user.
+- Jangan mengganti React.js menjadi Next.js, Node.js menjadi Laravel, atau Supabase PostgreSQL menjadi MongoDB.
+- Jika Frontend Stack, Backend Stack, atau Database Stack kosong, tulis "Belum ditentukan".
+- Gunakan stack berikut secara eksplisit di section Architecture:
+  - Frontend: {$frontendStack}
+  - Backend: {$backendStack}
+  - Database: {$databaseStack}
+  - Stored Data: {$storedDataDescription}
+- Core Features, Requirements, User Flow, ERD, dan Development Phases harus menggambarkan produk milik user, bukan aplikasi VibePlan AI.
+- Hindari menyisipkan endpoint, fitur history, markdown download, AI provider, atau arsitektur internal generator jika tidak diminta user.
 
 Section guidance:
-- Overview: purpose, target users, main problem, MVP goal, short future direction.
-- Requirements: functional requirements, non-functional requirements, MVP scope, future improvements, and this exact API endpoint list:
-  - POST /api/generate/prd
-  - POST /api/generate/next-step
-  - POST /api/generate/coding-prompt
-  - GET /api/history
-  - GET /api/history/{id}
-  - GET /api/download/{id}
-  - DELETE /api/history/{id}
-- Core Features: include exactly these features:
-  - PRD Generator
-  - Next Step Planner
-  - Coding Prompt Generator
-  - History Page
-  - Detail Result Page
-  - Download Markdown
-  - About Team Page
-- For each core feature, include:
-  - short summary
-  - stored data reference if relevant
-  - 3 to 4 concrete acceptance criteria
-- User Flow: ordered flow from input to generation, save, history, detail, download, about team.
-- Architecture: explain Next.js -> Laravel API -> AI provider -> MongoDB -> history -> markdown download. State that frontend calls Laravel only, Laravel validates input, builds prompt, calls AI, saves `markdown_content`, and serves downloads.
-- Design & Technical Constraints: no API keys in frontend, all AI results stored in MongoDB, every result has `markdown_content`, frontend and backend stay separated, download format is `.md`.
-- ERD: include one Mermaid `erDiagram` only with:
-  - PROJECTS ||--o{ AI_GENERATIONS : has
-  - TEAM_MEMBERS standalone
-  - typed fields for PROJECTS, AI_GENERATIONS, TEAM_MEMBERS
-- Development Phases: at least 6 compact phases including:
-  - Project setup
-  - Laravel backend API
-  - MongoDB integration
-  - AI integration
-  - Next.js frontend integration
-  - Testing, polish, and demo preparation
-
-ERD field pattern:
-- PROJECTS: string _id, string project_name, string project_idea, string target_user, string main_problem, string app_type, string tech_stack, string skill_level, string initial_prd, datetime created_at, datetime updated_at
-- AI_GENERATIONS: string _id, string project_id, string generation_type, string title, string markdown_content, object json_content, string ai_provider, string ai_model, datetime created_at, datetime updated_at
-- TEAM_MEMBERS: string _id, string name, string nim, string role, string contribution, datetime created_at, datetime updated_at
+- Overview: purpose, target users, main problem, MVP goal, and a short future direction for the user's product.
+- Requirements: functional requirements, non-functional requirements, MVP scope, and future improvements based on the project idea.
+- Core Features: derive 4 to 8 MVP features from the user's product idea. For each feature, include a short summary and 3 to 4 concrete acceptance criteria.
+- User Flow: ordered flow of how the target user will use the product from entry point to main outcome.
+- Architecture: explain the system architecture using the exact selected stack above. If backend is Node.js, describe it as Node.js REST API or Express.js API when framework is not specified. If database is Supabase PostgreSQL, describe storage using tables. Never mention the generator application's stack.
+- Design & Technical Constraints: mention realistic engineering constraints, security, deployment assumptions, and integration boundaries based on the user's stack and skill level.
+- ERD: include one Mermaid `erDiagram` only, adapted to the user's project domain. Use entity names and relationships that match the product idea.
+- Development Phases: at least 5 compact phases aligned to the chosen stack, from setup to deployment/testing.
 PROMPT;
+    }
+
+    /**
+     * @return array{frontend: string, backend: string, database: string, notes: string}
+     */
+    private function resolveArchitectureContext(string $techStack): array
+    {
+        $frontend = 'Belum ditentukan';
+        $backend = 'Belum ditentukan';
+        $database = 'Belum ditentukan';
+        $notes = [];
+        $segments = preg_split('/[\n;,]+/', $techStack) ?: [];
+
+        foreach ($segments as $segment) {
+            $trimmed = trim($segment);
+
+            if ($trimmed === '') {
+                continue;
+            }
+
+            if (preg_match('/^frontend\s*[:=-]?\s*(.+)$/i', $trimmed, $matches) === 1) {
+                $frontend = $this->normalizeFrontendStack($matches[1]);
+                continue;
+            }
+
+            if (preg_match('/^backend\s*[:=-]?\s*(.+)$/i', $trimmed, $matches) === 1) {
+                $backend = $this->normalizeBackendStack($matches[1]);
+                continue;
+            }
+
+            if (preg_match('/^(database|db)\s*[:=-]?\s*(.+)$/i', $trimmed, $matches) === 1) {
+                $database = $this->normalizeDatabaseStack($matches[2]);
+                continue;
+            }
+
+            if ($frontend === 'Belum ditentukan' && $this->looksLikeFrontendStack($trimmed)) {
+                $frontend = $this->normalizeFrontendStack($trimmed);
+                continue;
+            }
+
+            if ($backend === 'Belum ditentukan' && $this->looksLikeBackendStack($trimmed)) {
+                $backend = $this->normalizeBackendStack($trimmed);
+                continue;
+            }
+
+            if ($database === 'Belum ditentukan' && $this->looksLikeDatabaseStack($trimmed)) {
+                $database = $this->normalizeDatabaseStack($trimmed);
+                continue;
+            }
+
+            $notes[] = $trimmed;
+        }
+
+        return [
+            'frontend' => $frontend,
+            'backend' => $backend,
+            'database' => $database,
+            'notes' => $notes !== [] ? implode(', ', $notes) : 'Tidak ada catatan tambahan',
+        ];
+    }
+
+    private function normalizeFrontendStack(?string $value): string
+    {
+        return match ($this->normalizeToken($value)) {
+            '', 'belumditentukan' => 'Belum ditentukan',
+            'react', 'reactjs' => 'React.js',
+            'next', 'nextjs' => 'Next.js',
+            'vue', 'vuejs' => 'Vue.js',
+            'nuxt', 'nuxtjs' => 'Nuxt.js',
+            'angular' => 'Angular',
+            'flutter' => 'Flutter',
+            'svelte', 'sveltekit' => 'SvelteKit',
+            default => $this->preserveStackLabel($value),
+        };
+    }
+
+    private function normalizeBackendStack(?string $value): string
+    {
+        return match ($this->normalizeToken($value)) {
+            '', 'belumditentukan' => 'Belum ditentukan',
+            'node', 'nodejs' => 'Node.js',
+            'express', 'expressjs' => 'Express.js',
+            'nestjs', 'nest' => 'NestJS',
+            'laravel' => 'Laravel',
+            'php' => 'PHP',
+            'django' => 'Django',
+            'flask' => 'Flask',
+            'springboot' => 'Spring Boot',
+            default => $this->preserveStackLabel($value),
+        };
+    }
+
+    private function normalizeDatabaseStack(?string $value): string
+    {
+        return match ($this->normalizeToken($value)) {
+            '', 'belumditentukan' => 'Belum ditentukan',
+            'supabase', 'supabasepostgresql' => 'Supabase PostgreSQL',
+            'postgres', 'postgresql' => 'PostgreSQL',
+            'mysql' => 'MySQL',
+            'mariadb' => 'MariaDB',
+            'mongodb', 'mongo' => 'MongoDB',
+            'firebase', 'firestore' => 'Firebase Firestore',
+            'sqlite' => 'SQLite',
+            default => $this->preserveStackLabel($value),
+        };
+    }
+
+    private function looksLikeFrontendStack(string $value): bool
+    {
+        return preg_match('/\b(react|next|vue|nuxt|angular|flutter|svelte)\b/i', $value) === 1;
+    }
+
+    private function looksLikeBackendStack(string $value): bool
+    {
+        return preg_match('/\b(node|express|nest|laravel|django|flask|spring|php)\b/i', $value) === 1;
+    }
+
+    private function looksLikeDatabaseStack(string $value): bool
+    {
+        return preg_match('/\b(supabase|postgres|mysql|mariadb|mongodb|mongo|firebase|firestore|sqlite)\b/i', $value) === 1;
+    }
+
+    private function normalizeToken(?string $value): string
+    {
+        $normalized = strtolower(trim((string) $value));
+        $normalized = preg_replace('/[^a-z0-9]+/', '', $normalized) ?? $normalized;
+
+        return $normalized;
+    }
+
+    private function preserveStackLabel(?string $value): string
+    {
+        $trimmed = trim((string) $value);
+
+        return $trimmed !== '' ? $trimmed : 'Belum ditentukan';
+    }
+
+    private function resolveStorageStructureTerm(string $databaseStack): string
+    {
+        $normalized = strtolower($databaseStack);
+
+        return match (true) {
+            str_contains($normalized, 'mongodb') => 'collection',
+            str_contains($normalized, 'supabase'),
+            str_contains($normalized, 'postgres'),
+            str_contains($normalized, 'mysql'),
+            str_contains($normalized, 'mariadb'),
+            str_contains($normalized, 'sqlite') => 'table',
+            str_contains($normalized, 'firebase'),
+            str_contains($normalized, 'firestore') => 'collection/document',
+            default => 'data storage structure',
+        };
+    }
+
+    private function resolveStoredDataDescription(string $databaseStack, string $storageStructure): string
+    {
+        if ($databaseStack === 'Belum ditentukan') {
+            return 'gunakan data storage structure yang relevan setelah database dipilih secara final.';
+        }
+
+        return match ($storageStructure) {
+            'collection' => "disimpan dalam collection {$databaseStack} seperti users, projects, tasks, dan generated_documents sesuai kebutuhan aplikasi.",
+            'table' => "disimpan dalam tabel {$databaseStack} seperti users, projects, tasks, dan generated_documents sesuai kebutuhan aplikasi.",
+            'collection/document' => "disimpan dalam struktur collection/document {$databaseStack} seperti users, projects, tasks, dan generated_documents sesuai kebutuhan aplikasi.",
+            default => 'disimpan dalam struktur data yang menyesuaikan database dan domain aplikasi.',
+        };
+    }
+
+    private function formatPromptValue(?string $value): string
+    {
+        $trimmed = trim((string) $value);
+
+        return $trimmed !== '' ? $trimmed : 'Belum ditentukan';
     }
 
     private function buildNextStepPrompt(Project $project, array $context = [], bool $compact = false): string
     {
-        $agentMode = $context['agent_mode'] ?? 'auto';
-        $selectedAgent = $context['selected_agent'] ?? 'auto';
+        $requestedWorkflow = (string) ($context['coding_workflow'] ?? $context['selected_agent'] ?? 'auto');
         $prdSourceMode = $context['prd_source_mode'] ?? 'form';
         $uploadedPrdFilename = $context['uploaded_prd_filename'] ?? '-';
         $sourceGenerationId = $context['source_generation_id'] ?? '-';
@@ -167,15 +331,17 @@ PROMPT;
         $sourceMarkdownBlock = $sourceMarkdown !== ''
             ? $sourceMarkdown
             : 'Tidak ada source_generation_id. Gunakan konteks project input sebagai sumber utama.';
-        $isUploadedPrdMode = $prdSourceMode === 'upload';
-        $agentDisplayName = match ($selectedAgent) {
-            'codex' => 'Codex',
-            'claude-code' => 'Claude Code',
-            'github-copilot' => 'GitHub Copilot',
-            'antigravity' => 'Antigravity',
-            'manual-beginner' => 'Manual Beginner Guide',
-            default => 'Auto Recommend Agent',
-        };
+        $workflowContext = $this->resolveCodingWorkflowContext($requestedWorkflow, $project, $sourceMarkdownBlock);
+        $workflowHeading = $workflowContext['requested'] === 'auto'
+            ? "- Coding Workflow Request: Auto Recommend Agent\n- Workflow yang dipakai untuk output: {$workflowContext['effective_label']}\n- Alasan rekomendasi: {$workflowContext['recommendation_reason']}"
+            : "- Coding Workflow Request: {$workflowContext['requested_label']}\n- Workflow yang dipakai untuk output: {$workflowContext['effective_label']}";
+        $workflowIntroSection = $workflowContext['requested'] === 'auto'
+            ? "  - ## Rekomendasi Workflow\n"
+            : '';
+        $sectionStructure = $workflowContext['effective'] === 'manual_beginner'
+            ? "- Every numbered section must use this exact format:\n  - Tujuan langkah:\n  - Yang dilakukan user:\n  - File/folder yang diperiksa atau diedit:\n  - Cara verifikasi:"
+            : "- Every numbered section must use this exact format:\n  - Tujuan langkah:\n  - Deliverable utama:\n  - Prompt siap pakai:\n  - File target / area kerja:\n  - Acceptance test:";
+        $workflowRules = $this->nextStepWorkflowRules($workflowContext['effective']);
 
         if ($compact) {
             return <<<PROMPT
@@ -183,6 +349,7 @@ You are a senior technical project planner and beginner-friendly coding mentor.
 Return Markdown only.
 Write in Indonesian.
 Keep the output concise, direct, and practical.
+Output wajib mengikuti coding_workflow yang dipilih user. Jangan membuat roadmap generik. Jangan mengganti workflow user dengan workflow lain kecuali coding_workflow = auto.
 
 Create a compact Next Step Planner based on this project context:
 
@@ -195,19 +362,18 @@ Create a compact Next Step Planner based on this project context:
 - Uploaded PRD Filename: {$uploadedPrdFilename}
 - Source Generation ID: {$sourceGenerationId}
 - Source Generation Type: {$sourceGenerationType}
-- Agent Mode: {$agentMode}
-- Selected Agent Display Name: {$agentDisplayName}
+{$workflowHeading}
 
 Requirements:
 - Return Markdown only.
 - Focus on practical next actions after the PRD is ready.
 - Avoid long theory.
-- Keep the selected coding agent context.
-- Mention that prompts can be refined again through VibePlan AI if needed.
+- Keep the selected coding workflow context and make the roadmap style match it.
+- Mention that prompts or langkah bisa disempurnakan lagi melalui VibePlan AI jika dibutuhkan.
 - Use the PRD source below as the primary basis when available.
 - The output must contain exactly these headings in this order:
   - # Next Step Planner - Guided Vibe Coding Roadmap
-  - ## 1. Taruh PRD di Folder Project
+{$workflowIntroSection}  - ## 1. Taruh PRD di Folder Project
   - ## 2. Buat AGENTS.md
   - ## 3. Prompt Pertama: Baca PRD
   - ## 4. Prompt Kedua: Cek Struktur Folder
@@ -218,19 +384,8 @@ Requirements:
   - ## 9. Integrasi Frontend dan Backend
   - ## 10. Testing Aplikasi
   - ## 11. GitHub dan Deployment
-- Every numbered section must use this exact compact structure:
-  - Tujuan langkah:
-  - Apa yang dilakukan user:
-  - Prompt siap pakai untuk coding agent:
-  - Hasil yang harus terlihat:
-- Every prompt siap pakai must:
-  - be inside a fenced code block with language `text`
-  - be a natural-language instruction, not short notes
-  - mention project context
-  - explain what the coding agent should do
-  - explain what the coding agent must not do
-  - explain what result/output the coding agent must return
-  - never be only shell commands or file names
+{$sectionStructure}
+{$workflowRules}
 
 PRD source markdown:
 {$sourceMarkdownBlock}
@@ -258,16 +413,15 @@ Create a Guided Vibe Coding Roadmap based on the project and PRD context below.
 - Uploaded PRD Filename: {$uploadedPrdFilename}
 - Source Generation ID: {$sourceGenerationId}
 - Source Generation Type: {$sourceGenerationType}
-- Agent Mode: {$agentMode}
-- Selected Agent: {$selectedAgent}
-- Selected Agent Display Name: {$agentDisplayName}
+{$workflowHeading}
 
 Requirements:
 - Return Markdown only.
 - Use the PRD source below as the main basis.
+- Output wajib mengikuti coding_workflow yang dipilih user. Jangan membuat roadmap generik. Jangan mengganti workflow user dengan workflow lain kecuali coding_workflow = auto.
 - The output must contain exactly these headings in this order:
   - # Next Step Planner - Guided Vibe Coding Roadmap
-  - ## 1. Taruh PRD di Folder Project
+{$workflowIntroSection}  - ## 1. Taruh PRD di Folder Project
   - ## 2. Buat AGENTS.md
   - ## 3. Prompt Pertama: Baca PRD
   - ## 4. Prompt Kedua: Cek Struktur Folder
@@ -278,59 +432,24 @@ Requirements:
   - ## 9. Integrasi Frontend dan Backend
   - ## 10. Testing Aplikasi
   - ## 11. GitHub dan Deployment
-- Every numbered section must use this exact compact format:
-  - Tujuan langkah:
-  - Apa yang dilakukan user:
-  - Prompt siap pakai untuk coding agent:
-  - Hasil yang harus terlihat:
-- For every prompt siap pakai:
-  - write it inside a fenced code block with language `text`
-  - make it a real instruction, not short notes
-  - include project context
-  - explain what the coding agent should do
-  - explain what the coding agent must not do
-  - explain what result/output the coding agent must return
-  - never output only shell commands, file names, or TODO fragments
-- Bad examples that must never appear:
-  - "baca prd"
-  - "mengerti konteks projek"
-  - "buat folder frontend dan backend"
-  - "konfigurasi database dan backend"
-- Good prompt style example:
-```text
-Baca file docs/PRD.md dan pahami kebutuhan project. Jangan menulis kode dulu. Buat ringkasan singkat berisi tujuan aplikasi, fitur utama, kebutuhan backend, kebutuhan frontend, database, endpoint API, risiko implementasi, dan urutan kerja yang disarankan untuk pemula.
-```
-- Keep prompts beginner-friendly and concise.
-- Mention that prompts can be refined again through VibePlan AI when useful.
-- Use accurate stack assumptions:
-  - Next.js frontend
-  - Laravel REST API backend
-  - MongoDB with mongodb/laravel-mongodb
-  - markdown `.md` download
-  - generation ID for result and download
-  - AI API keys stay in backend `.env`
-- Backend should be recommended first before frontend.
-- Frontend must call Laravel API only.
-
-Agent adaptation rules:
-- Codex: optimize for structured repository work, incremental edits, verification, and implementation order.
-- Claude Code: optimize for codebase analysis, debugging, refactor planning, and terminal workflow.
-- GitHub Copilot: optimize for VS Code workflow, smaller iterative tasks, and practical implementation assistance.
-- Antigravity: optimize for task decomposition, orchestration, and agentic workflow.
-- Manual Beginner Guide: optimize for simpler manual steps and tool-neutral wording.
+{$sectionStructure}
+{$workflowRules}
+- Mention that the roadmap can be refined again through VibePlan AI when useful.
+- Keep the output practical, structured, and aligned with the selected workflow.
+- Backend should still be planned before frontend unless the uploaded PRD explicitly requires another order.
 
 Section-specific guidance:
 - Section 1 must place the PRD at `project-root/docs/PRD.md`.
 - Section 2 must create `AGENTS.md` from the PRD.
-- Section 3 must ask the coding agent to read the PRD before coding.
+- Section 3 must understand the PRD first before implementation.
 - Section 4 must inspect or propose the folder structure first.
-- Section 5 must create or verify `frontend-next/`, `backend-laravel/`, `docs/`, `README.md`, and `.gitignore`.
-- Section 6 must focus on Laravel backend MVP first, including endpoints, validation, services, MongoDB models, and `.env` safety.
-- Section 7 must configure MongoDB and verify `/api/history`.
-- Section 8 must implement frontend pages against the existing Laravel API.
-- Section 9 must integrate frontend and backend using generation ID, not project ID, for result/download.
-- Section 10 must test generate PRD, generate next step, generate coding prompt, history, detail, download, delete, MongoDB persistence, and API key safety.
-- Section 11 must prepare GitHub, README, `.env.example`, deployment notes, and production checklist.
+- Section 5 must create or verify the main frontend/backend/docs structure based on the selected workflow.
+- Section 6 must focus on backend implementation priorities first.
+- Section 7 must configure database and API contracts based on the selected project stack.
+- Section 8 must implement frontend tasks against the agreed backend contract.
+- Section 9 must integrate frontend and backend using clear verification checkpoints.
+- Section 10 must test key flows, list bugs, and verify fixes.
+- Section 11 must prepare GitHub hygiene, deployment notes, and production checklist.
 
 PRD source markdown:
 {$sourceMarkdownBlock}
@@ -339,18 +458,18 @@ PROMPT;
 
     private function buildCodingPrompt(Project $project, array $context = [], bool $compact = false): string
     {
-        $selectedAgent = $context['selected_agent'] ?? 'codex';
+        $requestedWorkflow = (string) ($context['coding_workflow'] ?? $context['selected_agent'] ?? 'auto');
         $uploadedNextStepFilename = $context['uploaded_next_step_filename'] ?? '-';
         $nextStepMarkdown = trim((string) ($context['source_generation_markdown'] ?? ''));
         $normalModeRetry = (bool) ($context['normal_mode_retry'] ?? false);
-        $agentDisplayName = match ($selectedAgent) {
-            'codex' => 'Codex',
-            'claude-code' => 'Claude Code',
-            'github-copilot' => 'GitHub Copilot',
-            'antigravity' => 'Antigravity',
-            'manual-beginner' => 'Manual Beginner Guide',
-            default => 'Codex',
-        };
+        $workflowContext = $this->resolveCodingWorkflowContext($requestedWorkflow, $project, $nextStepMarkdown);
+        $workflowHeading = $workflowContext['requested'] === 'auto'
+            ? "- Coding Workflow Request: Auto Recommend Agent\n- Workflow yang dipakai untuk output: {$workflowContext['effective_label']}\n- Alasan rekomendasi: {$workflowContext['recommendation_reason']}"
+            : "- Coding Workflow Request: {$workflowContext['requested_label']}\n- Workflow yang dipakai untuk output: {$workflowContext['effective_label']}";
+        $workflowIntroSection = $workflowContext['requested'] === 'auto'
+            ? "  - ## Rekomendasi Workflow\n"
+            : '';
+        $codingPromptRules = $this->codingPromptWorkflowRules($workflowContext['effective']);
 
         if ($compact) {
             return <<<PROMPT
@@ -360,17 +479,16 @@ Write in Indonesian.
 Create a concise, copy-paste-ready coding prompt document.
 Do not write theory, long explanations, repeated sections, or a full PRD summary.
 Use only the uploaded Next Step Planner as the main source.
-Generate only practical prompts for the selected coding agent.
+Output wajib mengikuti coding_workflow yang dipilih user. Jangan membuat prompt generik. Jangan mengganti workflow user dengan workflow lain kecuali coding_workflow = auto.
 
 - Project Name: {$project->project_name}
 - Uploaded Next Step Filename: {$uploadedNextStepFilename}
-- Selected Agent: {$selectedAgent}
-- Selected Agent Display Name: {$agentDisplayName}
+{$workflowHeading}
 
 Output rules:
 - Start with this exact title: # Coding Prompt Generator - Mode Ringkas
 - Use exactly these sections in this order:
-  - ## 1. Ringkasan Konteks
+{$workflowIntroSection}  - ## 1. Ringkasan Konteks
   - ## 2. Analisis PRD / Roadmap
   - ## 3. Setup Struktur Project
   - ## 4. Implementasi Backend
@@ -380,7 +498,7 @@ Output rules:
   - ## 8. Testing, GitHub, dan Deployment
 - Section 1 must contain only 3 bullet points in this exact label format:
   - Project:
-  - Agent:
+  - Workflow:
   - Tujuan:
 - Sections 2 to 8 must use exactly this structure:
   - ### Tujuan
@@ -390,18 +508,12 @@ Output rules:
 - For every "### Prompt siap pakai", write exactly 1 prompt inside a fenced code block with language `text`.
 - For every "### Hasil yang diharapkan", write only 2 short bullet points.
 - Every prompt must be maximum 8 lines.
-- Every prompt must be natural language instructions, not only bash commands.
 - Every prompt must mention the project context from the uploaded roadmap.
-- Every prompt must tell the coding agent what to do, what not to do, and what result to return.
-- Do not output large code blocks.
+- Every prompt must tell what to do, what not to do, and what result to return.
 - Do not add checklist, conclusion, or extra sections.
 - Do not repeat the full roadmap or full PRD.
 - Focus only on the most actionable implementation steps from the uploaded roadmap.
-- If selected_agent is "codex", optimize prompts for structured repository work and verification.
-- If selected_agent is "claude-code", optimize prompts for repo understanding, debugging, and implementation planning.
-- If selected_agent is "github-copilot", optimize prompts for practical VS Code workflow and smaller steps.
-- If selected_agent is "antigravity", optimize prompts for task breakdown and agentic workflow.
-- If selected_agent is "manual-beginner", write simple and beginner-friendly tool-neutral prompts.
+{$codingPromptRules}
 
 Uploaded Next Step Planner markdown:
 {$nextStepMarkdown}
@@ -425,17 +537,17 @@ Create an AI Coding Prompt Generator document based only on the uploaded Next St
 
 - Project Name: {$project->project_name}
 - Uploaded Next Step Filename: {$uploadedNextStepFilename}
-- Selected Agent: {$selectedAgent}
-- Selected Agent Display Name: {$agentDisplayName}
+{$workflowHeading}
 
 Requirements:
 - Return Markdown only.
 - The uploaded Next Step Planner is the only main source.
 - Do not use the normal project form as the source.
 - Do not expose AI API keys.
+- Output wajib mengikuti coding_workflow yang dipilih user. Jangan membuat prompt generik. Jangan mengganti workflow user dengan workflow lain kecuali coding_workflow = auto.
 - The output must contain exactly these sections in this order:
   - # Coding Prompt Generator - Normal Mode
-  - ## 1. Analisis PRD / Roadmap
+{$workflowIntroSection}  - ## 1. Analisis PRD / Roadmap
   - ## 2. Buat AGENTS.md
   - ## 3. Cek Struktur Folder
   - ## 4. Setup Folder Frontend dan Backend
@@ -454,35 +566,206 @@ Requirements:
 - For "### Prompt siap pakai", write exactly 1 copy-paste-ready prompt inside a fenced code block with language `text`.
 - For "### Hasil yang diharapkan", write only 2 short bullet points.
 - Every prompt must be maximum 12 lines, or maximum 8 lines when the retry instruction above is active.
-- Every prompt must be a natural language instruction to the selected coding agent, not only bash commands.
+- Every prompt must mention project context, what should be changed, what must not be changed, and what output/result should be returned.
 - Do not add extra sections, checklist, or long introduction.
 - Do not rewrite the full PRD or full roadmap.
 - Avoid duplicate prompts or repeated explanations.
 - Focus on implementation workflow from analysis to deployment.
-- Mention project context, what the coding agent should do, what must not be changed, and what output/result should be returned.
-- For backend, frontend, integration, testing, GitHub, and deployment sections, require the coding agent to inspect the current repository first before editing files.
-- For implementation sections, require the coding agent to preserve existing structure and avoid unrelated rewrites.
-- Agent adaptation rules:
-  - If selected_agent is "codex", optimize prompts for structured repository work, minimal unrelated edits, verification, and step-by-step implementation.
-  - If selected_agent is "claude-code", optimize prompts for codebase understanding, debugging, terminal workflow, and implementation planning.
-  - If selected_agent is "github-copilot", optimize prompts for VS Code workflow, smaller iterative tasks, and practical implementation assistance.
-  - If selected_agent is "antigravity", optimize prompts for task decomposition, explicit orchestration, and agentic workflow.
-  - If selected_agent is "manual-beginner", write simple, tool-neutral, beginner-friendly instructions.
+{$codingPromptRules}
 - Section-specific guidance:
   - "Analisis PRD / Roadmap" must focus on understanding scope, stack, roadmap steps, dependencies, and risks before coding.
   - "Buat AGENTS.md" must create guidance from the roadmap and return the rules summary.
   - "Cek Struktur Folder" must inspect the repo and verify the working structure before implementation.
-  - "Setup Folder Frontend dan Backend" must create or verify `frontend-next/`, `backend-laravel/`, `docs/`, `README.md`, and `.gitignore`.
-  - "Implementasi Backend" must focus on API, service layer, validation, and MongoDB before frontend changes.
-  - "Konfigurasi Database dan API" must verify MongoDB connection, endpoint behavior, and safe `.env` usage.
-  - "Implementasi Frontend" must build UI against the existing Laravel API without exposing API keys.
-  - "Integrasi Frontend dan Backend" must use generation ID for result and download flow.
-  - "Testing dan Bug Fixing" must ask the agent to verify behavior, list bugs, and fix them one by one.
+  - "Setup Folder Frontend dan Backend" must create or verify the main worktree structure before implementation.
+  - "Implementasi Backend" must focus on API, service layer, validation, and persistence layer before frontend changes when relevant.
+  - "Konfigurasi Database dan API" must verify database connection, endpoint behavior, and safe `.env` usage.
+  - "Implementasi Frontend" must build UI against the agreed backend contract without exposing API keys.
+  - "Integrasi Frontend dan Backend" must verify data flow and acceptance criteria.
+  - "Testing dan Bug Fixing" must verify behavior, list bugs, and fix them one by one.
   - "GitHub" must prepare clean commit flow, README updates, and repository hygiene.
   - "Deployment" must prepare deployment notes, `.env.example`, and production validation without exposing secrets.
 
 Uploaded Next Step Planner markdown:
 {$nextStepMarkdown}
 PROMPT;
+    }
+
+    /**
+     * @return array{requested: string, requested_label: string, effective: string, effective_label: string, recommendation_reason: string}
+     */
+    private function resolveCodingWorkflowContext(string $workflow, Project $project, string $sourceMarkdown = ''): array
+    {
+        $requested = $this->normalizeWorkflowValue($workflow);
+        $effective = $requested === 'auto'
+            ? $this->recommendCodingWorkflow($project, $sourceMarkdown)
+            : $requested;
+
+        return [
+            'requested' => $requested,
+            'requested_label' => $this->workflowLabel($requested),
+            'effective' => $effective,
+            'effective_label' => $this->workflowLabel($effective),
+            'recommendation_reason' => $this->workflowRecommendationReason($effective, $project, $sourceMarkdown),
+        ];
+    }
+
+    private function normalizeWorkflowValue(string $workflow): string
+    {
+        $normalized = str_replace('-', '_', strtolower(trim($workflow)));
+
+        return match ($normalized) {
+            'codex', 'claude_code', 'github_copilot', 'antigravity', 'manual_beginner' => $normalized,
+            default => 'auto',
+        };
+    }
+
+    private function workflowLabel(string $workflow): string
+    {
+        return match ($workflow) {
+            'auto' => 'Auto Recommend Agent',
+            'codex' => 'Codex',
+            'claude_code' => 'Claude Code',
+            'github_copilot' => 'GitHub Copilot',
+            'antigravity' => 'Antigravity',
+            'manual_beginner' => 'Manual Beginner Guide',
+            default => 'Auto Recommend Agent',
+        };
+    }
+
+    private function recommendCodingWorkflow(Project $project, string $sourceMarkdown = ''): string
+    {
+        $combined = strtolower(trim(
+            implode(' ', [
+                (string) $project->skill_level,
+                (string) $project->tech_stack,
+                (string) $project->project_idea,
+                (string) $project->initial_prd,
+                $sourceMarkdown,
+            ])
+        ));
+
+        if (str_contains($combined, 'beginner') || str_contains($combined, 'pemula')) {
+            return 'manual_beginner';
+        }
+
+        if (
+            str_contains($combined, 'debug')
+            || str_contains($combined, 'refactor')
+            || str_contains($combined, 'existing codebase')
+            || str_contains($combined, 'legacy')
+        ) {
+            return 'claude_code';
+        }
+
+        if (
+            str_contains($combined, 'agentic')
+            || str_contains($combined, 'orchestr')
+            || str_contains($combined, 'decomposition')
+            || str_contains($combined, 'multi-step')
+        ) {
+            return 'antigravity';
+        }
+
+        if (
+            str_contains($combined, 'copilot')
+            || str_contains($combined, 'vs code')
+            || str_contains($combined, 'github issue')
+        ) {
+            return 'github_copilot';
+        }
+
+        return 'codex';
+    }
+
+    private function workflowRecommendationReason(string $workflow, Project $project, string $sourceMarkdown = ''): string
+    {
+        return match ($workflow) {
+            'manual_beginner' => 'Skill level atau konteks project menunjukkan kebutuhan langkah manual yang lebih mudah diikuti.',
+            'claude_code' => 'Konteks project mengarah ke kebutuhan analisis codebase, debugging, atau refactor bertahap.',
+            'github_copilot' => 'Konteks project cocok untuk workflow kecil bertahap ala VS Code dan issue-based implementation.',
+            'antigravity' => 'Konteks project cocok untuk task decomposition dan workflow agentic multi-tahap.',
+            default => 'Konteks project paling cocok untuk workflow implementasi terstruktur multi-file dengan batasan dan acceptance test yang jelas.',
+        };
+    }
+
+    private function nextStepWorkflowRules(string $workflow): string
+    {
+        return match ($workflow) {
+            'codex' => <<<'RULES'
+- Workflow style must follow Codex.
+- Setiap section harus menghasilkan tugas implementasi yang cocok untuk agent multi-file.
+- Untuk setiap section, sertakan file target atau area kerja yang spesifik.
+- Setiap prompt harus memuat batasan "do not modify" yang jelas untuk mencegah perubahan area yang tidak relevan.
+- Setiap section harus punya acceptance test yang bisa diverifikasi setelah task selesai.
+RULES,
+            'claude_code' => <<<'RULES'
+- Workflow style must follow Claude Code.
+- Mulai setiap prompt dengan instruksi untuk membaca file relevan terlebih dahulu sebelum mengedit.
+- Fokus pada analisis codebase, debugging, refactor aman, dan implementasi file-by-file.
+- Setiap section harus menyebut file atau folder yang perlu diinspeksi sebelum perubahan dilakukan.
+- Setiap acceptance test harus menekankan verifikasi incremental setelah perubahan kecil.
+RULES,
+            'github_copilot' => <<<'RULES'
+- Workflow style must follow GitHub Copilot.
+- Setiap section harus berupa task kecil issue-style yang fokus pada satu komponen atau satu fitur dalam satu waktu.
+- Prompt harus singkat, praktis, dan cocok untuk workflow VS Code atau GitHub issue-to-PR.
+- Hindari task multi-file yang terlalu besar dalam satu section.
+- Acceptance test harus ringkas dan langsung dapat dijalankan setelah task selesai.
+RULES,
+            'antigravity' => <<<'RULES'
+- Workflow style must follow Antigravity.
+- Setiap section harus menekankan task decomposition, phase, checkpoint validasi, dan orkestrasi kerja agentic.
+- Prompt harus memecah implementasi ke subtask yang runtut sebelum eksekusi.
+- Cantumkan checkpoint verifikasi pada tiap section sebelum lanjut ke langkah berikutnya.
+RULES,
+            'manual_beginner' => <<<'RULES'
+- Workflow style must follow Manual Beginner Guide.
+- Jangan menulis prompt untuk coding agent.
+- Tulis langkah manual yang mudah diikuti manusia, termasuk file atau folder yang dibuka, bagian yang diedit, command yang dijalankan, dan cara verifikasi hasil.
+- Gunakan bahasa yang sederhana, tidak teknis berlebihan, dan cocok untuk pemula.
+RULES,
+            default => <<<'RULES'
+- Workflow style must follow the recommended workflow above and must not be generic.
+RULES,
+        };
+    }
+
+    private function codingPromptWorkflowRules(string $workflow): string
+    {
+        return match ($workflow) {
+            'codex' => <<<'RULES'
+- Workflow style must follow Codex.
+- Generate prompt copy-paste-ready untuk agent multi-file yang bisa bekerja secara terstruktur.
+- Setiap prompt harus menyebut target files atau folder yang relevan.
+- Setiap prompt harus menyebut batasan "do not modify" dan acceptance test singkat.
+- Jangan menghasilkan prompt dangkal yang hanya berisi command terminal.
+RULES,
+            'claude_code' => <<<'RULES'
+- Workflow style must follow Claude Code.
+- Setiap prompt harus meminta Claude Code menginspeksi file relevan terlebih dahulu sebelum mengedit.
+- Fokus pada reasoning, codebase reading, debugging, refactor aman, dan perubahan incremental.
+- Minta output berupa ringkasan analisis, daftar file yang akan diubah, implementasi, lalu verifikasi.
+RULES,
+            'github_copilot' => <<<'RULES'
+- Workflow style must follow GitHub Copilot.
+- Setiap prompt harus pendek, issue-style, dan fokus pada satu komponen atau satu feature slice.
+- Cocokkan wording dengan workflow VS Code atau GitHub Copilot agent mode.
+- Hindari prompt panjang multi-file yang terlalu luas.
+RULES,
+            'antigravity' => <<<'RULES'
+- Workflow style must follow Antigravity.
+- Setiap prompt harus menekankan task decomposition, implementation phases, checkpoint validasi, dan agentic workflow.
+- Pecah task besar menjadi subtask yang bisa dijalankan berurutan.
+RULES,
+            'manual_beginner' => <<<'RULES'
+- Workflow style must follow Manual Beginner Guide.
+- Setiap prompt harus berupa instruksi implementasi yang ramah untuk manusia, bukan agent-only wording.
+- Jelaskan file yang dibuka, bagian yang diedit, command yang dijalankan, dan cara memverifikasi hasil.
+- Gunakan bahasa sederhana dan terarah untuk pemula.
+RULES,
+            default => <<<'RULES'
+- Workflow style must follow the recommended workflow above and must not be generic.
+RULES,
+        };
     }
 }

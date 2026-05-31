@@ -36,6 +36,7 @@ class AuthController extends Controller
 
         $user = User::query()->create([
             'name' => $validated['name'],
+            'display_name' => $validated['name'],
             'email' => strtolower($validated['email']),
             'password_hash' => Hash::make($validated['password']),
             'role' => 'user',
@@ -159,6 +160,7 @@ class AuthController extends Controller
         return [
             'id' => (string) $user?->getKey(),
             'name' => (string) $user?->name,
+            'display_name' => (string) ($user?->display_name ?: $user?->name),
             'email' => (string) $user?->email,
             'avatar_url' => $user?->avatar_url,
             'role' => (string) ($user?->role ?? 'user'),

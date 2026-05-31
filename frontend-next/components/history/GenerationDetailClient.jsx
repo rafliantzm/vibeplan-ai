@@ -108,6 +108,8 @@ export default function GenerationDetailClient({ id, mode = "history" }) {
     generation.generation_type === "prd" && Boolean(generationId);
   const projectName = generation.project?.project_name || "Tidak tersedia";
   const selectedAgent =
+    generation.json_content?.selected_agent_label ||
+    generation.json_content?.coding_workflow ||
     generation.json_content?.selected_agent ||
     generation.json_content?.agent_mode ||
     "-";
@@ -138,8 +140,7 @@ export default function GenerationDetailClient({ id, mode = "history" }) {
 
       const response = await generateContent("next-step", {
         source_generation_id: generationId,
-        agent_mode: isAutoMode ? "auto" : "manual",
-        selected_agent: isAutoMode ? null : selectedPlannerOption,
+        coding_workflow: isAutoMode ? "auto" : selectedPlannerOption,
       });
       const nextStepId = getGenerationResponseId(response);
 
@@ -346,5 +347,6 @@ function formatAgentLabel(value) {
 
   return String(value)
     .replaceAll("-", " ")
+    .replaceAll("_", " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }

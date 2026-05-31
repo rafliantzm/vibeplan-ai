@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import LoginRequiredCard from "@/components/auth/LoginRequiredCard";
 import LoadingState from "@/components/common/LoadingState";
 import {
@@ -33,11 +33,11 @@ export default function ProfilePage() {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [profileForm, setProfileForm] = useState({ name: "", email: "" });
-  const [quickNameForm, setQuickNameForm] = useState({ name: "" });
+  const [quickNameForm, setQuickNameForm] = useState({ display_name: "" });
   const [passwordForm, setPasswordForm] = useState({
     current_password: "",
-    new_password: "",
-    new_password_confirmation: "",
+    password: "",
+    password_confirmation: "",
   });
   const [selectedAvatarFile, setSelectedAvatarFile] = useState(null);
   const [avatarPreviewUrl, setAvatarPreviewUrl] = useState("");
@@ -52,6 +52,17 @@ export default function ProfilePage() {
   const [passwordStatus, setPasswordStatus] = useState("");
   const [avatarStatus, setAvatarStatus] = useState("");
   const [avatarError, setAvatarError] = useState("");
+  const [quickNameError, setQuickNameError] = useState("");
+  const [passwordErrors, setPasswordErrors] = useState({
+    current_password: "",
+    password: "",
+    password_confirmation: "",
+    general: "",
+  });
+  const [profileFormInitialized, setProfileFormInitialized] = useState(false);
+  const [isAccountDirty, setIsAccountDirty] = useState(false);
+  const [isDisplayNameDirty, setIsDisplayNameDirty] = useState(false);
+  const previousUserIdRef = useRef(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -90,7 +101,6 @@ export default function ProfilePage() {
       const response = await getProfile();
       const nextProfile = response?.data || null;
       setProfile(nextProfile);
-      hydrateForms(nextProfile, setProfileForm, setQuickNameForm);
     } catch (loadError) {
       setError(getErrorMessage(loadError));
     } finally {
@@ -98,8 +108,10 @@ export default function ProfilePage() {
     }
   }, []);
 
+  const userId = user?.id || user?._id || null;
+
   useEffect(() => {
-    if (!isMounted || !user) {
+    if (!isMounted || !userId) {
       return undefined;
     }
 
@@ -108,7 +120,43 @@ export default function ProfilePage() {
     }, 0);
 
     return () => window.clearTimeout(timer);
-  }, [isMounted, user, loadProfile]);
+  }, [isMounted, userId, loadProfile]);
+
+  useEffect(() => {
+    if (userId && previousUserIdRef.current !== userId) {
+      previousUserIdRef.current = userId;
+      setProfileFormInitialized(false);
+      setIsAccountDirty(false);
+      setIsDisplayNameDirty(false);
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    const sourceProfile = profile || user;
+
+    if (!sourceProfile || profileFormInitialized) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      if (!isAccountDirty) {
+        setProfileForm({
+          name: sourceProfile?.name || "",
+          email: sourceProfile?.email || "",
+        });
+      }
+
+      if (!isDisplayNameDirty) {
+        setQuickNameForm({
+          display_name: getDisplayName(sourceProfile),
+        });
+      }
+
+      setProfileFormInitialized(true);
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [profile, user, profileFormInitialized, isAccountDirty, isDisplayNameDirty]);
 
   const currentProfile = profile || user;
   const avatarSrc = avatarPreviewUrl || currentProfile?.avatar_url || "";
@@ -124,17 +172,23 @@ export default function ProfilePage() {
   }, [selectedAvatarFile]);
 
   function handleProfileChange(event) {
-    const { name, value } = event.target;
-    setProfileForm((current) => ({ ...current, [name]: value }));
+    const field = event.target.dataset.field || event.target.name;
+    const { value } = event.target;
+    setIsAccountDirty(true);
+    setProfileForm((current) => ({ ...current, [field]: value }));
   }
 
   function handleQuickNameChange(event) {
-    setQuickNameForm({ name: event.target.value });
+    const field = event.target.dataset.field || event.target.name;
+    const { value } = event.target;
+    setIsDisplayNameDirty(true);
+    setQuickNameForm((current) => ({ ...current, [field]: value }));
   }
 
   function handlePasswordChange(event) {
-    const { name, value } = event.target;
-    setPasswordForm((current) => ({ ...current, [name]: value }));
+    const field = event.target.dataset.field || event.target.name;
+    const { value } = event.target;
+    setPasswordForm((current) => ({ ...current, [field]: value }));
   }
 
   function handleAvatarFileChange(event) {
@@ -192,12 +246,19 @@ export default function ProfilePage() {
       setIsQuickNameSubmitting(true);
       setError("");
       setQuickNameStatus("");
+      setQuickNameError("");
       const response = await updateProfileName(quickNameForm);
-      const nextProfile = response?.data || null;
+      const nextProfile = response?.data || response?.user || null;
       applyProfileUpdate(nextProfile);
-      setQuickNameStatus("Nama berhasil diperbarui.");
+      setQuickNameStatus("Nama tampilan berhasil diperbarui.");
     } catch (submitError) {
-      setError(getErrorMessage(submitError));
+      const nextMessage =
+        getProfileFieldError(submitError, "display_name") ||
+        submitError?.userMessage ||
+        submitError?.message ||
+        "Nama tampilan gagal diperbarui.";
+
+      setQuickNameError(nextMessage);
     } finally {
       setIsQuickNameSubmitting(false);
     }
@@ -238,19 +299,37 @@ export default function ProfilePage() {
       setIsPasswordSubmitting(true);
       setError("");
       setPasswordStatus("");
+      setPasswordErrors({
+        current_password: "",
+        password: "",
+        password_confirmation: "",
+        general: "",
+      });
       await updatePassword(passwordForm);
       setPasswordForm({
         current_password: "",
-        new_password: "",
-        new_password_confirmation: "",
+        password: "",
+        password_confirmation: "",
       });
       setPasswordStatus("Password berhasil diperbarui.");
     } catch (submitError) {
+      const fieldErrors = {
+        current_password: getProfileFieldError(submitError, "current_password"),
+        password: getProfileFieldError(submitError, "password"),
+        password_confirmation: getProfileFieldError(submitError, "password_confirmation"),
+        general: "",
+      };
+
       if (submitError?.errorCode === "CURRENT_PASSWORD_INVALID") {
-        setError("Password lama tidak sesuai.");
+        fieldErrors.current_password = "Password lama tidak sesuai.";
       } else {
-        setError(getErrorMessage(submitError));
+        fieldErrors.general =
+          submitError?.userMessage ||
+          submitError?.message ||
+          getErrorMessage(submitError);
       }
+
+      setPasswordErrors(fieldErrors);
     } finally {
       setIsPasswordSubmitting(false);
     }
@@ -258,7 +337,16 @@ export default function ProfilePage() {
 
   function applyProfileUpdate(nextProfile) {
     setProfile(nextProfile);
-    hydrateForms(nextProfile, setProfileForm, setQuickNameForm);
+    setProfileForm({
+      name: nextProfile?.name || "",
+      email: nextProfile?.email || "",
+    });
+    setQuickNameForm({
+      display_name: getDisplayName(nextProfile),
+    });
+    setProfileFormInitialized(true);
+    setIsAccountDirty(false);
+    setIsDisplayNameDirty(false);
     setUser(getUser());
   }
 
@@ -342,6 +430,7 @@ export default function ProfilePage() {
             onSubmit={handleQuickNameSubmit}
             isSubmitting={isQuickNameSubmitting}
             statusMessage={quickNameStatus}
+            errorMessage={quickNameError}
           />
           <ProfileStatsCards currentProfile={currentProfile} />
         </div>
@@ -353,6 +442,7 @@ export default function ProfilePage() {
         onSubmit={handlePasswordSubmit}
         isSubmitting={isPasswordSubmitting}
         statusMessage={passwordStatus}
+        errors={passwordErrors}
       />
     </div>
   );
@@ -506,21 +596,27 @@ function ProfileAccountFormCard({
         </p>
       </div>
 
-      <form onSubmit={onSubmit} className="mt-5">
+      <form onSubmit={onSubmit} autoComplete="off" className="mt-5">
         <div className="grid gap-4 md:grid-cols-2">
           <Field
             label="Nama"
+            inputName="profile_account_name"
+            fieldKey="name"
             name="name"
             value={profileForm.name}
             onChange={onChange}
+            autoComplete="off"
             required
           />
           <Field
             label="Email"
+            inputName="profile_account_email"
+            fieldKey="email"
             name="email"
             type="email"
             value={profileForm.email}
             onChange={onChange}
+            autoComplete="off"
             required
           />
         </div>
@@ -665,6 +761,7 @@ function ProfileDisplayNameCard({
   onSubmit,
   isSubmitting,
   statusMessage,
+  errorMessage,
 }) {
   return (
     <section className={CARD_BASE_CLASS}>
@@ -683,13 +780,17 @@ function ProfileDisplayNameCard({
         </p>
       </div>
 
-      <form onSubmit={onSubmit} className="mt-5 grid gap-4">
+      <form onSubmit={onSubmit} autoComplete="off" className="mt-5 grid gap-4">
         <Field
           label="Nama Tampilan"
-          name="quick_name"
-          value={quickNameForm.name}
+          inputName="profile_display_name"
+          fieldKey="display_name"
+          name="display_name"
+          value={quickNameForm.display_name}
           onChange={onChange}
+          autoComplete="new-password"
           required
+          error={errorMessage}
         />
         <button
           type="submit"
@@ -734,6 +835,7 @@ function ProfilePasswordCard({
   onSubmit,
   isSubmitting,
   statusMessage,
+  errors,
 }) {
   return (
     <section className={CARD_BASE_CLASS}>
@@ -764,31 +866,43 @@ function ProfilePasswordCard({
         </p>
       </div>
 
-      <form onSubmit={onSubmit} className="mt-6">
+      <form onSubmit={onSubmit} autoComplete="off" className="mt-6">
         <div className="grid gap-4 lg:grid-cols-3">
           <Field
             label="Password Lama"
+            inputName="profile_current_password"
+            fieldKey="current_password"
             name="current_password"
             type="password"
             value={passwordForm.current_password}
             onChange={onChange}
+            autoComplete="current-password"
             required
+            error={errors?.current_password}
           />
           <Field
             label="Password Baru"
-            name="new_password"
+            inputName="profile_new_password"
+            fieldKey="password"
+            name="password"
             type="password"
-            value={passwordForm.new_password}
+            value={passwordForm.password}
             onChange={onChange}
+            autoComplete="new-password"
             required
+            error={errors?.password}
           />
           <Field
             label="Konfirmasi Password Baru"
-            name="new_password_confirmation"
+            inputName="profile_password_confirmation"
+            fieldKey="password_confirmation"
+            name="password_confirmation"
             type="password"
-            value={passwordForm.new_password_confirmation}
+            value={passwordForm.password_confirmation}
             onChange={onChange}
+            autoComplete="new-password"
             required
+            error={errors?.password_confirmation}
           />
         </div>
 
@@ -802,6 +916,7 @@ function ProfilePasswordCard({
       </form>
 
       {statusMessage ? <MessageBanner tone="success" className="mt-4">{statusMessage}</MessageBanner> : null}
+      {errors?.general ? <MessageBanner tone="error" className="mt-4">{errors.general}</MessageBanner> : null}
     </section>
   );
 }
@@ -836,14 +951,17 @@ function MessageBanner({ children, tone = "info", className = "" }) {
   );
 }
 
-function Field({ label, ...props }) {
+function Field({ label, error, inputName, fieldKey, ...props }) {
   return (
     <label className="grid min-w-0 gap-2">
       <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">{label}</span>
       <input
         {...props}
+        name={inputName || props.name}
+        data-field={fieldKey || props.name}
         className={INPUT_CLASS}
       />
+      {error ? <span className="text-sm text-rose-600">{error}</span> : null}
     </label>
   );
 }
@@ -925,16 +1043,6 @@ function AvatarDisplay({ src, name, sizeClass = "h-16 w-16 text-xl" }) {
   );
 }
 
-function hydrateForms(nextProfile, setProfileForm, setQuickNameForm) {
-  setProfileForm({
-    name: nextProfile?.name || "",
-    email: nextProfile?.email || "",
-  });
-  setQuickNameForm({
-    name: nextProfile?.name || "",
-  });
-}
-
 function formatFileSize(bytes) {
   if (!bytes || Number.isNaN(bytes)) {
     return "0 KB";
@@ -965,4 +1073,22 @@ function formatRoleLabel(role) {
 
 function formatStatusLabel(status) {
   return status === "blocked" ? "Blocked" : "Active";
+}
+
+function getDisplayName(profile) {
+  return profile?.display_name || profile?.displayName || profile?.name || "";
+}
+
+function getProfileFieldError(error, fieldName) {
+  const fieldErrors = error?.payload?.errors?.[fieldName];
+
+  if (Array.isArray(fieldErrors) && fieldErrors.length > 0) {
+    return String(fieldErrors[0]);
+  }
+
+  if (typeof fieldErrors === "string" && fieldErrors.trim() !== "") {
+    return fieldErrors;
+  }
+
+  return "";
 }

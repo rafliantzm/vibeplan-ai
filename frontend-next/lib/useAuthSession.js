@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getCurrentUser } from "@/lib/api";
+import { getCurrentUser, getProfile } from "@/lib/api";
 import {
   clearSession,
   getToken,
@@ -41,15 +41,32 @@ export function useAuthSession({ syncWithServer = false } = {}) {
     }
 
     let isMounted = true;
+    
+    async function refreshProfile() {
+      try {
+        const payload = await getProfile();
 
-    void getCurrentUser()
-      .then((payload) => {
-        if (!isMounted || !payload?.user) {
+        if (!isMounted || !payload?.data) {
           return;
         }
 
-        updateStoredUser(payload.user);
-      })
+        updateStoredUser(payload.data);
+      } catch (profileError) {
+        if (!isMounted) {
+          return;
+        }
+
+        const fallbackPayload = await getCurrentUser();
+
+        if (!isMounted || !fallbackPayload?.user) {
+          return;
+        }
+
+        updateStoredUser(fallbackPayload.user);
+      }
+    }
+
+    void refreshProfile()
       .catch(() => {
         if (!isMounted) {
           return;
@@ -69,5 +86,23 @@ export function useAuthSession({ syncWithServer = false } = {}) {
     isReady,
     isLoggedIn: Boolean(session.token),
     isAdmin: session.user?.role === "admin",
+    refreshUser: async () => {
+      if (!getToken()) {
+        return null;
+      }
+
+      try {
+        const payload = await getProfile();
+        return payload?.data || null;
+      } catch {
+        const payload = await getCurrentUser();
+
+        if (payload?.user) {
+          updateStoredUser(payload.user);
+        }
+
+        return payload?.user || null;
+      }
+    },
   };
 }

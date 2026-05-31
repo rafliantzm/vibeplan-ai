@@ -51,6 +51,7 @@ class GenerateController extends Controller
             ], 500);
         }
 
+        $this->normalizeWorkflowInputs($request, $generationType);
         $validated = $request->validate($this->rulesFor($generationType));
 
         try {
@@ -170,7 +171,10 @@ class GenerateController extends Controller
                 'title' => $this->markdownService->titleFor($generationType, $titleSource),
                 'markdown_content' => $markdown,
                 'json_content' => [
+                    'project_name' => (string) ($project->project_name ?? ''),
                     'generation_mode' => (string) ($validated['generation_mode'] ?? 'normal'),
+                    'coding_workflow' => $context['coding_workflow'] ?? null,
+                    'selected_agent_label' => $context['coding_workflow_label'] ?? null,
                     'max_tokens_used' => $maxTokens,
                     'retry_used' => $retryUsed,
                     'finish_reason' => $aiResult['finish_reason'] ?? null,
@@ -324,11 +328,12 @@ class GenerateController extends Controller
             $rules['prd_source_mode'] = ['nullable', 'in:form,upload'];
             $rules['prd_markdown'] = ['nullable', 'required_if:prd_source_mode,upload', 'string', 'max:1000000'];
             $rules['uploaded_prd_filename'] = ['nullable', 'string', 'max:255'];
+            $rules['coding_workflow'] = ['nullable', 'in:auto,codex,claude_code,github_copilot,antigravity,manual_beginner'];
             $rules['agent_mode'] = ['nullable', 'in:auto,manual'];
             $rules['selected_agent'] = [
                 'nullable',
                 'required_if:agent_mode,manual',
-                'in:codex,claude-code,github-copilot,antigravity,manual-beginner',
+                'in:codex,claude_code,github_copilot,antigravity,manual_beginner',
             ];
         }
 
@@ -336,9 +341,13 @@ class GenerateController extends Controller
             $rules['prompt_source_mode'] = ['required', 'in:next-step-upload'];
             $rules['next_step_markdown'] = ['required', 'string', 'max:1000000'];
             $rules['uploaded_next_step_filename'] = ['nullable', 'string', 'max:255'];
+            $rules['coding_workflow'] = [
+                'nullable',
+                'in:auto,codex,claude_code,github_copilot,antigravity,manual_beginner',
+            ];
             $rules['selected_agent'] = [
-                'required',
-                'in:codex,claude-code,github-copilot,antigravity,manual-beginner',
+                'nullable',
+                'in:codex,claude_code,github_copilot,antigravity,manual_beginner',
             ];
         }
 
@@ -361,8 +370,11 @@ class GenerateController extends Controller
             return [$this->resolveProject($validated), $context];
         }
 
-        $context['agent_mode'] = $validated['agent_mode'] ?? 'auto';
-        $context['selected_agent'] = $validated['selected_agent'] ?? null;
+        $workflow = (string) ($validated['coding_workflow'] ?? 'auto');
+        $context['coding_workflow'] = $workflow;
+        $context['coding_workflow_label'] = $this->resolveWorkflowLabel($workflow);
+        $context['agent_mode'] = $workflow === 'auto' ? 'auto' : 'manual';
+        $context['selected_agent'] = $workflow === 'auto' ? null : $workflow;
 
         if (! empty($validated['source_generation_id'])) {
             $sourceGeneration = AiGeneration::query()->find($validated['source_generation_id']);
@@ -388,7 +400,11 @@ class GenerateController extends Controller
 
         if (($validated['prd_source_mode'] ?? 'form') === 'upload') {
             $uploadedPrdFilename = trim((string) ($validated['uploaded_prd_filename'] ?? ''));
-            $project = $this->createProjectFromUploadedPrd($validated, $uploadedPrdFilename);
+            $project = $this->createProjectFromUploadedPrd(
+                $validated,
+                $uploadedPrdFilename,
+                (string) ($validated['prd_markdown'] ?? '')
+            );
             $preparedPrd = $this->uploadedPrdPreparationService->prepareForAi(
                 (string) ($validated['prd_markdown'] ?? ''),
                 (string) ($validated['generation_mode'] ?? 'normal'),
@@ -398,7 +414,7 @@ class GenerateController extends Controller
             $context['uploaded_prd_filename'] = $uploadedPrdFilename !== '' ? $uploadedPrdFilename : null;
             $context['source_generation_markdown'] = $preparedPrd['markdown'];
             $context['source_generation_type'] = 'uploaded-prd';
-            $context['title_source'] = $uploadedPrdFilename !== '' ? $uploadedPrdFilename : (string) $project->project_name;
+            $context['title_source'] = (string) $project->project_name;
             $context['prd_was_trimmed'] = $preparedPrd['was_trimmed'];
             $context['original_prd_length'] = $preparedPrd['original_length'];
             $context['trimmed_prd_length'] = $preparedPrd['trimmed_length'];
@@ -417,7 +433,7 @@ class GenerateController extends Controller
      */
     private function resolveProject(array $validated): Project
     {
-        $projectAttributes = collect($validated)
+        $projectAttributes = $this->normalizeProjectAttributes(collect($validated)
             ->only([
                 'project_name',
                 'project_idea',
@@ -429,7 +445,7 @@ class GenerateController extends Controller
                 'initial_prd',
             ])
             ->filter(static fn ($value) => $value !== null)
-            ->all();
+            ->all());
 
         if (! empty($validated['project_id'])) {
             $project = Project::query()->find($validated['project_id']);
@@ -447,6 +463,90 @@ class GenerateController extends Controller
         }
 
         return Project::query()->create($projectAttributes);
+    }
+
+    /**
+     * @param  array<string, mixed>  $projectAttributes
+     * @return array<string, mixed>
+     */
+    private function normalizeProjectAttributes(array $projectAttributes): array
+    {
+        if (array_key_exists('tech_stack', $projectAttributes)) {
+            $projectAttributes['tech_stack'] = $this->normalizeTechStackField(
+                (string) $projectAttributes['tech_stack']
+            );
+        }
+
+        return $projectAttributes;
+    }
+
+    private function normalizeTechStackField(string $techStack): string
+    {
+        $normalized = trim($techStack);
+
+        if ($normalized === '') {
+            return '';
+        }
+
+        $patterns = [
+            '/\bReact(?:\.js|js)?\b/i' => 'React.js',
+            '/\bNode(?:\.js|js)?\b/i' => 'Node.js',
+            '/\bSupabase(?:\s+PostgreSQL)?\b/i' => 'Supabase PostgreSQL',
+            '/\bMongo(?:DB)?\b/i' => 'MongoDB',
+            '/\bPostgre(?:SQL)?\b/i' => 'PostgreSQL',
+        ];
+
+        foreach ($patterns as $pattern => $replacement) {
+            $normalized = preg_replace($pattern, $replacement, $normalized) ?? $normalized;
+        }
+
+        $normalized = preg_replace('/\s*,\s*/', ', ', $normalized) ?? $normalized;
+        $normalized = preg_replace('/\s{2,}/', ' ', $normalized) ?? $normalized;
+
+        return trim($normalized);
+    }
+
+    private function normalizeWorkflowInputs(Request $request, string $generationType): void
+    {
+        if (! in_array($generationType, ['next-step', 'coding-prompt'], true)) {
+            return;
+        }
+
+        $workflow = $request->input('coding_workflow');
+
+        if (! is_string($workflow) || trim($workflow) === '') {
+            $legacyAgent = $request->input('selected_agent');
+            $legacyMode = $request->input('agent_mode');
+
+            if (is_string($legacyAgent) && trim($legacyAgent) !== '') {
+                $workflow = $legacyAgent;
+            } elseif ($legacyMode === 'auto') {
+                $workflow = 'auto';
+            } else {
+                $workflow = $generationType === 'coding-prompt' ? 'auto' : 'auto';
+            }
+        }
+
+        $workflow = strtolower(trim((string) $workflow));
+        $workflow = str_replace('-', '_', $workflow);
+
+        $request->merge([
+            'coding_workflow' => $workflow,
+            'selected_agent' => $request->filled('selected_agent') ? $workflow : $request->input('selected_agent'),
+        ]);
+    }
+
+    private function resolveWorkflowLabel(string $workflow): string
+    {
+        return match ($workflow) {
+            'auto' => 'Auto Recommend Agent',
+            'codex' => 'Codex',
+            'claude_code' => 'Claude Code',
+            'github_copilot' => 'GitHub Copilot',
+            'antigravity' => 'Antigravity',
+            'manual_beginner' => 'Manual Beginner Guide',
+            default => 'Auto Recommend Agent',
+        };
     }
 
     /**
@@ -552,11 +652,13 @@ class GenerateController extends Controller
     /**
      * @param  array<string, mixed>  $validated
      */
-    private function createProjectFromUploadedPrd(array $validated, string $uploadedPrdFilename): Project
+    private function createProjectFromUploadedPrd(array $validated, string $uploadedPrdFilename, string $uploadedPrdMarkdown): Project
     {
-        $derivedProjectName = $uploadedPrdFilename !== ''
-            ? (pathinfo($uploadedPrdFilename, PATHINFO_FILENAME) ?: $uploadedPrdFilename)
-            : 'Uploaded PRD';
+        $derivedProjectName = $this->resolveUploadedProjectName(
+            $uploadedPrdFilename,
+            $uploadedPrdMarkdown,
+            'Uploaded PRD'
+        );
 
         return Project::query()->create([
             'project_name' => $derivedProjectName,
@@ -577,7 +679,10 @@ class GenerateController extends Controller
     private function resolveCodingPromptContext(array $validated): array
     {
         $uploadedNextStepFilename = trim((string) ($validated['uploaded_next_step_filename'] ?? ''));
-        $project = $this->createProjectFromUploadedNextStep($uploadedNextStepFilename);
+        $project = $this->createProjectFromUploadedNextStep(
+            $uploadedNextStepFilename,
+            (string) ($validated['next_step_markdown'] ?? '')
+        );
         $preparedNextStep = $this->prepareNextStepMarkdownForAi(
             (string) ($validated['next_step_markdown'] ?? ''),
             (string) ($validated['generation_mode'] ?? 'normal'),
@@ -588,11 +693,13 @@ class GenerateController extends Controller
             'uploaded_next_step_filename' => $uploadedNextStepFilename !== '' ? $uploadedNextStepFilename : null,
             'source_generation_markdown' => $preparedNextStep['markdown'],
             'source_generation_type' => 'uploaded-next-step',
-            'selected_agent' => (string) ($validated['selected_agent'] ?? 'codex'),
+            'coding_workflow' => (string) ($validated['coding_workflow'] ?? 'auto'),
+            'coding_workflow_label' => $this->resolveWorkflowLabel((string) ($validated['coding_workflow'] ?? 'auto')),
+            'selected_agent' => (string) ($validated['coding_workflow'] ?? 'auto'),
             'next_step_was_trimmed' => $preparedNextStep['was_trimmed'],
             'original_next_step_length' => $preparedNextStep['original_length'],
             'trimmed_next_step_length' => $preparedNextStep['trimmed_length'],
-            'title_source' => $uploadedNextStepFilename !== '' ? $uploadedNextStepFilename : (string) $project->project_name,
+            'title_source' => (string) $project->project_name,
         ]];
     }
 
@@ -695,11 +802,13 @@ class GenerateController extends Controller
         return trim(implode("\n", $keep));
     }
 
-    private function createProjectFromUploadedNextStep(string $uploadedNextStepFilename): Project
+    private function createProjectFromUploadedNextStep(string $uploadedNextStepFilename, string $uploadedNextStepMarkdown): Project
     {
-        $derivedProjectName = $uploadedNextStepFilename !== ''
-            ? (pathinfo($uploadedNextStepFilename, PATHINFO_FILENAME) ?: $uploadedNextStepFilename)
-            : 'Uploaded Next Step Planner';
+        $derivedProjectName = $this->resolveUploadedProjectName(
+            $uploadedNextStepFilename,
+            $uploadedNextStepMarkdown,
+            'Uploaded Next Step Planner'
+        );
 
         return Project::query()->create([
             'project_name' => $derivedProjectName,
@@ -711,5 +820,64 @@ class GenerateController extends Controller
             'skill_level' => 'Beginner',
             'initial_prd' => null,
         ]);
+    }
+
+    private function resolveUploadedProjectName(string $uploadedFilename, string $markdown, string $fallback): string
+    {
+        $markdownTitle = $this->extractTitleFromMarkdown($markdown);
+
+        if ($markdownTitle !== '') {
+            return $markdownTitle;
+        }
+
+        $filenameTitle = $uploadedFilename !== ''
+            ? (pathinfo($uploadedFilename, PATHINFO_FILENAME) ?: $uploadedFilename)
+            : '';
+
+        $cleanFilenameTitle = $this->cleanProjectTitle($filenameTitle);
+
+        if ($cleanFilenameTitle !== '') {
+            return $cleanFilenameTitle;
+        }
+
+        return $fallback;
+    }
+
+    private function extractTitleFromMarkdown(string $markdown): string
+    {
+        $normalized = str_replace(["\r\n", "\r"], "\n", $markdown);
+        $lines = preg_split("/\n/", $normalized) ?: [];
+
+        foreach ($lines as $line) {
+            $trimmed = trim($line);
+
+            if ($trimmed === '') {
+                continue;
+            }
+
+            if (preg_match('/^#\s+(.+)$/', $trimmed, $matches) === 1) {
+                return $this->cleanProjectTitle((string) ($matches[1] ?? ''));
+            }
+
+            break;
+        }
+
+        return '';
+    }
+
+    private function cleanProjectTitle(string $value): string
+    {
+        $cleaned = preg_replace('/^#+\s*/', '', $value) ?? $value;
+        $cleaned = preg_replace('/^(prd|product requirements document|next step planner|coding prompt generator|coding prompt|coding prompts|roadmap)\s*[-:|]\s*/i', '', $cleaned) ?? $cleaned;
+        $cleaned = preg_replace('/\s*[-:|]\s*(prd|product requirements document|next step planner|coding prompt generator|coding prompt|coding prompts|roadmap)$/i', '', $cleaned) ?? $cleaned;
+        $cleaned = preg_replace('/\bproduct requirements document\b/i', '', $cleaned) ?? $cleaned;
+        $cleaned = preg_replace('/\bnext step planner\b/i', '', $cleaned) ?? $cleaned;
+        $cleaned = preg_replace('/\bcoding prompt generator\b/i', '', $cleaned) ?? $cleaned;
+        $cleaned = preg_replace('/\bcoding prompts?\b/i', '', $cleaned) ?? $cleaned;
+        $cleaned = preg_replace('/\broadmap\b/i', '', $cleaned) ?? $cleaned;
+        $cleaned = preg_replace('/\bprd\b/i', '', $cleaned) ?? $cleaned;
+        $cleaned = preg_replace('/\s+/', ' ', trim($cleaned)) ?? trim($cleaned);
+
+        return trim($cleaned);
     }
 }

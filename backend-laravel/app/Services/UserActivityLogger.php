@@ -47,6 +47,7 @@ class UserActivityLogger
 
             if (in_array($normalizedKey, [
                 'password',
+                'password_confirmation',
                 'password_hash',
                 'current_password',
                 'new_password',

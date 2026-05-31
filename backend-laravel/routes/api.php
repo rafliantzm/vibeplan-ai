@@ -45,7 +45,7 @@ Route::middleware('auth.token')->group(function (): void {
     Route::delete('/history/{id}', [HistoryController::class, 'destroy']);
     Route::get('/profile', [ProfileController::class, 'show']);
     Route::patch('/profile', [ProfileController::class, 'update']);
-    Route::patch('/profile/name', [ProfileController::class, 'updateName']);
+    Route::patch('/profile/display-name', [ProfileController::class, 'updateName']);
     Route::patch('/profile/password', [ProfileController::class, 'updatePassword']);
     Route::post('/profile/avatar', [ProfileController::class, 'updateAvatar']);
 

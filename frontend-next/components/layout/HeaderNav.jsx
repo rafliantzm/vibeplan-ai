@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { logoutUser } from "@/lib/api";
-import { getToken, getUser, subscribeAuthChange } from "@/lib/auth";
+import { useAuthSession } from "@/lib/useAuthSession";
 
 const BASE_NAV_ITEMS = [
   { href: "/", label: "Home" },
@@ -17,37 +17,11 @@ const BASE_NAV_ITEMS = [
 
 export default function HeaderNav() {
   const pathname = usePathname();
-  const [isMounted, setIsMounted] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [session, setSession] = useState({
-    token: null,
-    user: null,
-  });
   const profileRef = useRef(null);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setIsMounted(true);
-      syncSession(setSession);
-    }, 0);
-
-    return () => window.clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
-    if (!isMounted) {
-      return undefined;
-    }
-
-    function handleAuthChange() {
-      syncSession(setSession);
-    }
-
-    const unsubscribe = subscribeAuthChange(handleAuthChange);
-
-    return unsubscribe;
-  }, [isMounted]);
+  const { user, token, isReady } = useAuthSession({ syncWithServer: true });
+  const isMounted = isReady;
 
   useEffect(() => {
     if (!isProfileOpen) {
@@ -87,9 +61,9 @@ export default function HeaderNav() {
     return () => window.clearTimeout(timer);
   }, [isMounted, pathname]);
 
-  const user = session.user;
-  const isLoggedIn = Boolean(session.token && user);
+  const isLoggedIn = Boolean(token && user);
   const isAdmin = user?.role === "admin";
+  const tokenBalance = getTokenBalance(user);
 
   const navItems = useMemo(() => BASE_NAV_ITEMS, []);
 
@@ -287,6 +261,8 @@ function ProfileDropdown({
   onLogout,
   profileRef,
 }) {
+  const tokenBalance = getTokenBalance(user);
+
   return (
     <div ref={profileRef} className="relative shrink-0">
       <button
@@ -299,7 +275,7 @@ function ProfileDropdown({
         <AvatarBadge user={user} sizeClass="h-10 w-10" textClass="text-sm" />
         <span className="hidden min-w-0 text-left md:block">
           <span className="block truncate text-sm font-semibold text-slate-900">
-            {user?.name || "User"}
+            {getDisplayName(user)}
           </span>
           <span className="block text-[11px] text-slate-500">
             {isAdmin ? "Admin" : "Member"}
@@ -317,7 +293,7 @@ function ProfileDropdown({
             <AvatarBadge user={user} sizeClass="h-11 w-11" textClass="text-sm" />
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-slate-900">
-                {user?.name || "User"}
+                {getDisplayName(user)}
               </p>
               <p className="text-xs text-slate-500">
                 {isAdmin ? "Admin Workspace" : "Member Workspace"}
@@ -330,7 +306,7 @@ function ProfileDropdown({
               Token tersedia
             </p>
             <p className="mt-1 text-sm font-semibold text-slate-900">
-              {user?.token_balance ?? 0} Tokens tersedia
+              {tokenBalance} Tokens tersedia
             </p>
           </div>
 
@@ -443,20 +419,22 @@ function MobileAccountPlaceholder() {
 }
 
 function MobileUserPanel({ user, onClose, onLogout }) {
+  const tokenBalance = getTokenBalance(user);
+
   return (
     <div className="grid gap-3">
       <div className="flex items-center gap-3 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3">
         <AvatarBadge user={user} sizeClass="h-11 w-11" textClass="text-sm" shadowClass="shadow-sm shadow-slate-900/10" />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-slate-900">
-            {user?.name || "User"}
+            {getDisplayName(user)}
           </p>
           <p className="text-xs text-slate-500">
             {user?.role === "admin" ? "Admin" : "Member"}
           </p>
         </div>
         <span className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
-          {user?.token_balance ?? 0} Tokens
+          {tokenBalance} Tokens
         </span>
       </div>
 
@@ -545,13 +523,6 @@ function AvatarBadge({
   );
 }
 
-function syncSession(setSession) {
-  setSession({
-    token: getToken(),
-    user: getUser(),
-  });
-}
-
 function isRouteActive(pathname, href) {
   if (href === "/") {
     return pathname === "/";
@@ -598,4 +569,20 @@ function getUserInitial(name) {
   }
 
   return name.trim().charAt(0).toUpperCase() || "V";
+}
+
+function getDisplayName(user) {
+  return user?.display_name || user?.displayName || user?.name || "User";
+}
+
+function getTokenBalance(user) {
+  const value =
+    user?.token_balance ??
+    user?.tokenBalance ??
+    user?.tokens ??
+    user?.token ??
+    0;
+
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? numericValue : 0;
 }

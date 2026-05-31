@@ -31,13 +31,13 @@ export const AGENT_OPTIONS = [
       "Cocok untuk implementasi full-stack terstruktur, multi-file, dan task-by-task coding.",
   },
   {
-    value: "claude-code",
+    value: "claude_code",
     label: "Claude Code",
     description:
       "Cocok untuk memahami codebase, debugging, refactor, dan workflow terminal/IDE agentic.",
   },
   {
-    value: "github-copilot",
+    value: "github_copilot",
     label: "GitHub Copilot",
     description:
       "Cocok untuk workflow VS Code/GitHub, issue-to-PR, autocomplete, dan agent mode.",
@@ -49,7 +49,7 @@ export const AGENT_OPTIONS = [
       "Cocok untuk workflow agentic, task decomposition, dan alur berbasis skills/MCP.",
   },
   {
-    value: "manual-beginner",
+    value: "manual_beginner",
     label: "Manual Beginner Guide",
     description:
       "Cocok jika ingin roadmap yang lebih manual tanpa bergantung pada coding agent penuh.",

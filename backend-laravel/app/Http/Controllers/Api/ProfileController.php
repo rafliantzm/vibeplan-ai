@@ -73,24 +73,25 @@ class ProfileController extends Controller
     {
         $user = $request->user();
         $validated = $request->validate([
-            'name' => ['required', 'string', 'max:100'],
+            'display_name' => ['required', 'string', 'max:100'],
         ]);
 
-        $user->name = $validated['name'];
+        $user->display_name = $validated['display_name'];
         $user->save();
 
         $this->activityLogger->log(
             $request,
             'profile_name_updated',
             'User memperbarui nama tampilan akun.',
-            ['name' => $user->name],
+            ['display_name' => $user->display_name],
             $user,
             $user,
         );
 
         return response()->json([
             'success' => true,
-            'message' => 'Nama berhasil diperbarui.',
+            'message' => 'Nama tampilan berhasil diperbarui.',
+            'user' => $this->profilePayload($user->fresh(), $request),
             'data' => $this->profilePayload($user->fresh(), $request),
         ]);
     }
@@ -136,7 +137,7 @@ class ProfileController extends Controller
         $user = $request->user();
         $validated = $request->validate([
             'current_password' => ['required', 'string'],
-            'new_password' => ['required', 'string', 'min:8', 'confirmed'],
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
         ]);
 
         if (! Hash::check($validated['current_password'], (string) $user->password_hash)) {
@@ -144,10 +145,13 @@ class ProfileController extends Controller
                 'success' => false,
                 'error_code' => 'CURRENT_PASSWORD_INVALID',
                 'message' => 'Password lama tidak sesuai.',
+                'errors' => [
+                    'current_password' => ['Password lama tidak sesuai.'],
+                ],
             ], 422);
         }
 
-        $user->password_hash = Hash::make($validated['new_password']);
+        $user->password_hash = Hash::make($validated['password']);
         $user->save();
 
         $this->activityLogger->log(
@@ -173,6 +177,7 @@ class ProfileController extends Controller
         return [
             'id' => (string) $user?->getKey(),
             'name' => (string) $user?->name,
+            'display_name' => (string) ($user?->display_name ?: $user?->name),
             'email' => (string) $user?->email,
             'avatar_url' => $this->resolveAvatarUrl($user, $request),
             'role' => (string) ($user?->role ?? 'user'),

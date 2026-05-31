@@ -22,7 +22,7 @@ export default function DownloadButton({ id, item, className = "" }) {
         throw new Error("ID hasil generate tidak ditemukan untuk proses unduh.");
       }
 
-      await downloadHistoryMarkdown(generationId);
+      await downloadHistoryMarkdown(generationId, item);
     } catch (downloadError) {
       setError(getErrorMessage(downloadError));
     } finally {

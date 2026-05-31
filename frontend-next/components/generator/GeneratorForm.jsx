@@ -9,12 +9,12 @@ const AGENT_CARD_COPY = {
     description: "Cocok untuk build full-stack terstruktur.",
     tag: "Structured",
   },
-  "claude-code": {
+  claude_code: {
     title: "Claude Code",
     description: "Ideal untuk debugging dan membaca codebase.",
     tag: "Debugging",
   },
-  "github-copilot": {
+  github_copilot: {
     title: "GitHub Copilot",
     description: "Cocok untuk workflow VS Code dan GitHub.",
     tag: "IDE Workflow",
@@ -24,7 +24,7 @@ const AGENT_CARD_COPY = {
     description: "Bagus untuk task breakdown agentic.",
     tag: "Agentic",
   },
-  "manual-beginner": {
+  manual_beginner: {
     title: "Manual Guide",
     description: "Pilihan sederhana untuk pemula.",
     tag: "Beginner",
@@ -206,6 +206,7 @@ export default function GeneratorForm({
             selectedValue={codingPromptAgent}
             onSelect={onCodingPromptAgentChange}
             agentOptions={agentOptions}
+            includeAuto
           />
         </>
       ) : null}

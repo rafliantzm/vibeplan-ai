@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import LoginRequiredCard from "@/components/auth/LoginRequiredCard";
 import LoadingState from "@/components/common/LoadingState";
@@ -8,8 +8,9 @@ import TokenLimitCard from "@/components/common/TokenLimitCard";
 import GeneratorForm from "@/components/generator/GeneratorForm";
 import GenerationTypeSelector from "@/components/generator/GenerationTypeSelector";
 import { createTokenResetRequest, generateContent } from "@/lib/api";
-import { getUser, subscribeAuthChange, updateStoredUser } from "@/lib/auth";
+import { updateStoredUser } from "@/lib/auth";
 import { AGENT_OPTIONS, DEFAULT_FORM, GENERATION_TYPES } from "@/lib/constants";
+import { useAuthSession } from "@/lib/useAuthSession";
 import { getErrorMessage, getGenerationResponseId } from "@/lib/utils";
 
 const GENERATION_CONTEXT = {
@@ -65,10 +66,12 @@ const GENERATION_HINTS = {
 
 export default function GeneratorWorkspace() {
   const router = useRouter();
-  const [isMounted, setIsMounted] = useState(false);
-  const [user, setUser] = useState(null);
+  const { user, isReady, isLoggedIn, refreshUser } = useAuthSession({ syncWithServer: true });
   const [generationType, setGenerationType] = useState("prd");
-  const [form, setForm] = useState(DEFAULT_FORM);
+  const [form, setForm] = useState(() => ({
+    ...DEFAULT_FORM,
+    tech_stack: "",
+  }));
   const [plannerAgent, setPlannerAgent] = useState("auto");
   const [prdSourceMode, setPrdSourceMode] = useState("form");
   const [nextStepGenerationMode, setNextStepGenerationMode] = useState("normal");
@@ -85,31 +88,6 @@ export default function GeneratorWorkspace() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [quotaState, setQuotaState] = useState(null);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setIsMounted(true);
-      setUser(getUser());
-    }, 0);
-
-    return () => window.clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
-    if (!isMounted) {
-      return undefined;
-    }
-
-    function syncUser() {
-      setUser(getUser());
-    }
-
-    const unsubscribe = subscribeAuthChange(syncUser);
-
-    return unsubscribe;
-  }, [isMounted]);
-
-  const isLoggedIn = Boolean(user);
 
   const activeGeneration =
     GENERATION_TYPES.find((item) => item.value === generationType) ||
@@ -278,7 +256,7 @@ export default function GeneratorWorkspace() {
               })
             : form;
 
-      await submitGenerationRequest(generationType, payload, router);
+      await submitGenerationRequest(generationType, payload, router, refreshUser);
     } catch (submitError) {
       if (
         submitError?.errorCode === "TOKEN_EMPTY" ||
@@ -314,7 +292,7 @@ export default function GeneratorWorkspace() {
       setIsSubmitting(true);
       setError("");
 
-      await submitGenerationRequest(quotaState.generationType, compactPayload, router);
+      await submitGenerationRequest(quotaState.generationType, compactPayload, router, refreshUser);
     } catch (submitError) {
       if (
         submitError?.errorCode === "PROVIDER_LIMIT" ||
@@ -352,7 +330,7 @@ export default function GeneratorWorkspace() {
     }
   }
 
-  if (!isMounted) {
+  if (!isReady) {
     return (
       <LoadingState
         title="Memeriksa sesi login..."
@@ -573,7 +551,7 @@ export default function GeneratorWorkspace() {
       {quotaState?.errorCode === "TOKEN_EMPTY" ? (
         <TokenLimitCard
           badge="Token User"
-          helperText={`Token saat ini: ${user?.token_balance ?? getUser()?.token_balance ?? 0}`}
+          helperText={`Token saat ini: ${user?.token_balance ?? user?.tokenBalance ?? 0}`}
           title="Token VibePlan AI Habis"
           body="Token kamu habis. Ajukan reset token ke admin agar bisa kembali menggunakan fitur generate AI."
           suggestions={[
@@ -646,15 +624,23 @@ function QuickGuidePanel() {
   );
 }
 
-async function submitGenerationRequest(generationType, payload, router) {
+async function submitGenerationRequest(generationType, payload, router, refreshUser) {
   const response = await generateContent(generationType, payload);
-  const currentUser = getUser();
+  const currentUser = userSnapshot();
 
   if (currentUser) {
     updateStoredUser({
       ...currentUser,
       token_balance: Math.max(0, Number(currentUser.token_balance || 0) - 1),
     });
+  }
+
+  if (typeof refreshUser === "function") {
+    try {
+      await refreshUser();
+    } catch {
+      // Keep optimistic token update if profile refresh fails.
+    }
   }
 
   const generationId = getGenerationResponseId(response);
@@ -667,6 +653,19 @@ async function submitGenerationRequest(generationType, payload, router) {
   router.push(`/result/${generationId}`);
 }
 
+function userSnapshot() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem("vibeplan_auth_user");
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 function buildNextStepPayload({
   form,
   prdSourceMode,
@@ -675,9 +674,8 @@ function buildNextStepPayload({
   plannerAgent,
   nextStepGenerationMode,
 }) {
-  const agentPayload = {
-    agent_mode: plannerAgent === "auto" ? "auto" : "manual",
-    selected_agent: plannerAgent === "auto" ? null : plannerAgent,
+  const workflowPayload = {
+    coding_workflow: plannerAgent || "auto",
   };
 
   if (prdSourceMode === "upload") {
@@ -690,7 +688,7 @@ function buildNextStepPayload({
       prd_markdown: uploadedPrdMarkdown,
       uploaded_prd_filename: uploadedPrdFilename || null,
       generation_mode: nextStepGenerationMode,
-      ...agentPayload,
+      ...workflowPayload,
     };
   }
 
@@ -698,7 +696,7 @@ function buildNextStepPayload({
     prd_source_mode: "form",
     generation_mode: nextStepGenerationMode,
     ...form,
-    ...agentPayload,
+    ...workflowPayload,
   };
 }
 
@@ -716,7 +714,7 @@ function buildCodingPromptPayload({
     prompt_source_mode: "next-step-upload",
     next_step_markdown: uploadedNextStepMarkdown,
     uploaded_next_step_filename: uploadedNextStepFilename || null,
-    selected_agent: codingPromptAgent,
+    coding_workflow: codingPromptAgent || "auto",
     generation_mode: codingPromptGenerationMode,
   };
 }

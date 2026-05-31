@@ -1,6 +1,6 @@
 import { API_URL } from "@/lib/constants";
 import { clearSession, getToken, setSession, updateStoredUser } from "@/lib/auth";
-import { extractFilename } from "@/lib/utils";
+import { buildMarkdownFilename, extractFilename } from "@/lib/utils";
 
 const DEFAULT_TIMEOUT_MS = 30000;
 const GENERATE_TIMEOUT_MS = 120000;
@@ -201,7 +201,7 @@ export async function deleteHistoryItem(id) {
   });
 }
 
-export async function downloadHistoryMarkdown(id) {
+export async function downloadHistoryMarkdown(id, item = null) {
   if (!id) {
     throw new Error("ID hasil generate tidak ditemukan untuk proses unduh.");
   }
@@ -247,7 +247,7 @@ export async function downloadHistoryMarkdown(id) {
   }
 
   const blob = await response.blob();
-  const filename = extractFilename(response.headers);
+  const filename = extractFilename(response.headers, buildMarkdownFilename(item));
   const objectUrl = window.URL.createObjectURL(blob);
   const link = document.createElement("a");
 
@@ -351,9 +351,15 @@ export async function getCurrentUser() {
 }
 
 export async function getProfile() {
-  return requestJson(`/api/profile`, {
+  const response = await requestJson(`/api/profile`, {
     method: "GET",
   });
+
+  if (response?.data) {
+    updateStoredUser(response.data);
+  }
+
+  return response;
 }
 
 export async function updateProfile(payload) {
@@ -370,13 +376,15 @@ export async function updateProfile(payload) {
 }
 
 export async function updateProfileName(payload) {
-  const response = await requestJson(`/api/profile/name`, {
+  const response = await requestJson(`/api/profile/display-name`, {
     method: "PATCH",
     body: JSON.stringify(payload),
   });
 
-  if (response?.data) {
-    updateStoredUser(response.data);
+  const nextUser = response?.data || response?.user || null;
+
+  if (nextUser) {
+    updateStoredUser(nextUser);
   }
 
   return response;
