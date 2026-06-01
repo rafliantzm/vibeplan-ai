@@ -523,6 +523,18 @@ export async function adminSendSupportConversationMessage(id, payload) {
   });
 }
 
+export async function deleteSupportConversation(conversationId) {
+  return requestJson(`/api/admin/support/conversations/${conversationId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function deleteSupportMessage(conversationId, messageId) {
+  return requestJson(`/api/admin/support/conversations/${conversationId}/messages/${messageId}`, {
+    method: "DELETE",
+  });
+}
+
 export async function adminCloseSupportConversation(id) {
   return requestJson(`/api/admin/support/conversations/${id}/close`, {
     method: "PATCH",

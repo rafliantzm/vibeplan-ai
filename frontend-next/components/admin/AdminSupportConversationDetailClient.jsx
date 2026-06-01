@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import LoginRequiredCard from "@/components/auth/LoginRequiredCard";
 import ErrorState from "@/components/common/ErrorState";
@@ -9,11 +10,16 @@ import {
   adminGetSupportConversation,
   adminReopenSupportConversation,
   adminSendSupportConversationMessage,
+  deleteSupportConversation,
+  deleteSupportMessage,
 } from "@/lib/api";
 import { getUser, subscribeAuthChange } from "@/lib/auth";
 import { formatDate, getErrorMessage } from "@/lib/utils";
 
+const SUPPORT_MESSAGE_LIMIT = 2000;
+
 export default function AdminSupportConversationDetailClient({ conversationId }) {
+  const router = useRouter();
   const [isMounted, setIsMounted] = useState(false);
   const [user, setUser] = useState(null);
   const [conversation, setConversation] = useState(null);
@@ -23,9 +29,18 @@ export default function AdminSupportConversationDetailClient({ conversationId })
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [isReopening, setIsReopening] = useState(false);
+  const [isDeletingConversation, setIsDeletingConversation] = useState(false);
+  const [isDeletingMessage, setIsDeletingMessage] = useState(false);
+  const [isDeleteConversationModalOpen, setIsDeleteConversationModalOpen] = useState(false);
+  const [messagePendingDelete, setMessagePendingDelete] = useState(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const messageListRef = useRef(null);
+  const messageBottomRef = useRef(null);
+  const shouldAutoScrollRef = useRef(true);
+  const lastMessageIdRef = useRef("");
+  const adminJustSentRef = useRef(false);
+  const initialConversationLoadRef = useRef(true);
   const isAdmin = user?.role === "admin";
 
   useEffect(() => {
@@ -94,20 +109,50 @@ export default function AdminSupportConversationDetailClient({ conversationId })
   }, [conversationId, isAdmin, isMounted, loadConversation]);
 
   useEffect(() => {
-    if (!messageListRef.current) {
+    const container = messageListRef.current;
+
+    if (!container) {
       return;
     }
 
-    messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
+    const lastMessageId = messages[messages.length - 1]?.id || "";
+    const hasNewLastMessage = Boolean(lastMessageId) && lastMessageId !== lastMessageIdRef.current;
+    const shouldScroll =
+      initialConversationLoadRef.current
+      || adminJustSentRef.current
+      || (hasNewLastMessage && shouldAutoScrollRef.current);
+
+    if (shouldScroll) {
+      window.requestAnimationFrame(() => {
+        messageBottomRef.current?.scrollIntoView({
+          behavior: initialConversationLoadRef.current ? "auto" : "smooth",
+          block: "end",
+        });
+      });
+    }
+
+    initialConversationLoadRef.current = false;
+    adminJustSentRef.current = false;
+    lastMessageIdRef.current = lastMessageId;
   }, [messages]);
+
+  function handleMessageScroll() {
+    shouldAutoScrollRef.current = isNearBottom(messageListRef.current);
+  }
 
   async function handleReplySubmit(event) {
     event.preventDefault();
+
+    if (reply.trim().length > SUPPORT_MESSAGE_LIMIT) {
+      setError("Pesan terlalu panjang. Ringkas pesan maksimal 2000 karakter.");
+      return;
+    }
 
     try {
       setIsSubmitting(true);
       setError("");
       setNotice("");
+      adminJustSentRef.current = true;
       const payload = await adminSendSupportConversationMessage(conversationId, {
         message: reply,
       });
@@ -151,6 +196,42 @@ export default function AdminSupportConversationDetailClient({ conversationId })
       setError(getErrorMessage(submitError));
     } finally {
       setIsReopening(false);
+    }
+  }
+
+  async function handleDeleteConversation() {
+    try {
+      setIsDeletingConversation(true);
+      setError("");
+      setNotice("");
+      await deleteSupportConversation(conversationId);
+      window.sessionStorage.setItem("vibeplan_admin_support_notice", "Percakapan berhasil dihapus.");
+      router.push("/admin/support-conversations");
+    } catch (submitError) {
+      setError(getErrorMessage(submitError));
+    } finally {
+      setIsDeletingConversation(false);
+    }
+  }
+
+  async function handleDeleteMessage() {
+    if (!messagePendingDelete?.id) {
+      return;
+    }
+
+    try {
+      setIsDeletingMessage(true);
+      setError("");
+      setNotice("");
+      const payload = await deleteSupportMessage(conversationId, messagePendingDelete.id);
+      setConversation(payload?.data?.conversation || null);
+      setMessages(payload?.data?.messages || []);
+      setNotice(payload?.message || "Pesan berhasil dihapus.");
+      setMessagePendingDelete(null);
+    } catch (submitError) {
+      setError(getErrorMessage(submitError));
+    } finally {
+      setIsDeletingMessage(false);
     }
   }
 
@@ -211,7 +292,7 @@ export default function AdminSupportConversationDetailClient({ conversationId })
       ) : null}
 
       {conversation ? (
-        <section className="rounded-[2rem] border border-slate-200 bg-white shadow-sm">
+        <section className="flex h-[calc(100vh-150px)] min-h-[560px] min-w-0 flex-col overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm sm:min-h-[640px]">
           <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 px-6 py-6">
             <div>
               <p className="text-2xl font-semibold text-slate-900">{conversation.name}</p>
@@ -221,6 +302,14 @@ export default function AdminSupportConversationDetailClient({ conversationId })
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsDeleteConversationModalOpen(true)}
+                disabled={isDeletingConversation}
+                className="rounded-full border border-rose-200 px-4 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isDeletingConversation ? "Menghapus..." : "Hapus Chat"}
+              </button>
               <StatusBadge status={conversation.status} />
               {conversation.unread_for_admin > 0 ? (
                 <span className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700">
@@ -232,11 +321,15 @@ export default function AdminSupportConversationDetailClient({ conversationId })
 
           <div
             ref={messageListRef}
-            className="max-h-[55vh] min-h-[340px] space-y-4 overflow-y-auto bg-[linear-gradient(180deg,_#f8fafc_0%,_#eef2ff_100%)] px-5 py-5"
+            onScroll={handleMessageScroll}
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-[linear-gradient(180deg,_#f8fafc_0%,_#eef2ff_100%)] px-4 py-5 sm:px-5"
           >
-            {messages.map((item) => (
-              <ChatBubble key={item.id} item={item} />
-            ))}
+            <div className="space-y-4">
+              {messages.map((item) => (
+                <AdminMessageBubble key={item.id} item={item} onDelete={() => setMessagePendingDelete(item)} />
+              ))}
+              <div ref={messageBottomRef} />
+            </div>
           </div>
 
           <div className="border-t border-slate-100 px-5 py-5">
@@ -267,6 +360,10 @@ export default function AdminSupportConversationDetailClient({ conversationId })
                     className="resize-none rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-200"
                     placeholder="Tulis balasan untuk user atau guest..."
                   />
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                    <span>Jangan kirim password, API key, atau data sensitif.</span>
+                    <span>{reply.length}/{SUPPORT_MESSAGE_LIMIT}</span>
+                  </div>
                 </label>
 
                 <div className="flex flex-wrap gap-3">
@@ -291,30 +388,109 @@ export default function AdminSupportConversationDetailClient({ conversationId })
           </div>
         </section>
       ) : null}
+
+      <ConfirmModal
+        isOpen={isDeleteConversationModalOpen}
+        title="Hapus percakapan ini?"
+        description="Percakapan dan seluruh pesan di dalamnya akan dihapus permanen. Gunakan fitur ini untuk chat yang tidak diperlukan atau berisi data sensitif."
+        confirmLabel={isDeletingConversation ? "Menghapus..." : "Hapus Percakapan"}
+        onCancel={() => {
+          if (!isDeletingConversation) {
+            setIsDeleteConversationModalOpen(false);
+          }
+        }}
+        onConfirm={handleDeleteConversation}
+        isConfirming={isDeletingConversation}
+      />
+
+      <ConfirmModal
+        isOpen={Boolean(messagePendingDelete)}
+        title="Hapus pesan ini?"
+        description="Pesan ini akan dihapus permanen dari percakapan."
+        confirmLabel={isDeletingMessage ? "Menghapus..." : "Hapus Pesan"}
+        onCancel={() => {
+          if (!isDeletingMessage) {
+            setMessagePendingDelete(null);
+          }
+        }}
+        onConfirm={handleDeleteMessage}
+        isConfirming={isDeletingMessage}
+      />
     </div>
   );
 }
 
-function ChatBubble({ item }) {
+function AdminMessageBubble({ item, onDelete }) {
   const isAdmin = item.sender_type === "admin";
+  const safeMessage = typeof item.message === "string" ? item.message : String(item.message || "");
 
   return (
-    <div className={`flex ${isAdmin ? "justify-end" : "justify-start"}`}>
-      <div
-        className={[
-          "max-w-[85%] rounded-[1.5rem] px-4 py-3 shadow-sm",
-          isAdmin
-            ? "rounded-br-md bg-[linear-gradient(135deg,_#0f172a,_#1d4ed8,_#4338ca)] text-white"
-            : "rounded-bl-md border border-slate-200 bg-white text-slate-800",
-        ].join(" ")}
-      >
-        <p className={`text-xs font-semibold uppercase tracking-[0.16em] ${isAdmin ? "text-sky-100" : "text-sky-600"}`}>
-          {isAdmin ? "Admin" : item.sender_name || "User"}
-        </p>
-        <p className="mt-1 whitespace-pre-wrap text-sm leading-7">{item.message}</p>
-        <p className={`mt-2 text-[11px] ${isAdmin ? "text-sky-100" : "text-slate-400"}`}>
-          {formatChatTime(item.created_at)}
-        </p>
+    <div className={`group flex ${isAdmin ? "justify-end" : "justify-start"}`}>
+      <div className={`flex max-w-full min-w-0 items-start gap-2 ${isAdmin ? "flex-row-reverse" : "flex-row"}`}>
+        <div
+          className={[
+            "w-fit max-w-[86%] min-w-[96px] overflow-hidden rounded-[1.5rem] px-4 py-3 shadow-sm sm:max-w-[75%] sm:min-w-[120px]",
+            isAdmin
+              ? "rounded-br-md bg-[linear-gradient(135deg,_#0f172a,_#1d4ed8,_#4338ca)] text-white"
+              : "rounded-bl-md border border-slate-200 bg-white text-slate-800",
+          ].join(" ")}
+        >
+          <p className={`text-xs font-semibold uppercase tracking-[0.16em] ${isAdmin ? "text-sky-100" : "text-sky-600"}`}>
+            {isAdmin ? "Admin" : item.sender_name || "User"}
+          </p>
+          <p className="mt-1 overflow-hidden whitespace-pre-wrap break-words text-sm leading-7 [overflow-wrap:anywhere]">{safeMessage}</p>
+          <p className={`mt-2 text-[11px] ${isAdmin ? "text-sky-100" : "text-slate-400"}`}>
+            {formatChatTime(item.created_at)}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onDelete}
+          className="mt-2 rounded-full border border-rose-200 px-3 py-1 text-xs font-medium text-rose-700 transition hover:bg-rose-50 sm:opacity-0 sm:group-hover:opacity-100"
+        >
+          Hapus
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmModal({
+  isOpen,
+  title,
+  description,
+  confirmLabel,
+  onCancel,
+  onConfirm,
+  isConfirming = false,
+}) {
+  if (!isOpen) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/45 px-4">
+      <div className="w-full max-w-md rounded-[2rem] border border-slate-200 bg-white p-6 shadow-2xl shadow-slate-900/15">
+        <p className="text-lg font-semibold text-slate-900">{title}</p>
+        <p className="mt-3 text-sm leading-7 text-slate-600">{description}</p>
+        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={isConfirming}
+            className="rounded-full border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Batal
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={isConfirming}
+            className="rounded-full border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {confirmLabel}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -350,4 +526,13 @@ function formatChatTime(value) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+function isNearBottom(element, threshold = 96) {
+  if (!element) {
+    return true;
+  }
+
+  const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+  return distanceFromBottom <= threshold;
 }

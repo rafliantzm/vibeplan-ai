@@ -13,6 +13,8 @@ use Illuminate\Support\Carbon;
 
 class AdminSupportMessageController extends Controller
 {
+    private const SUPPORT_MESSAGE_MAX = 2000;
+
     public function __construct(
         private readonly UserActivityLogger $activityLogger,
     ) {
@@ -22,7 +24,7 @@ class AdminSupportMessageController extends Controller
     {
         $authenticatedUser = $this->resolveAuthenticatedUser($request);
         $rules = [
-            'message' => ['required', 'string', 'max:2000'],
+            'message' => ['required', 'string', 'max:'.self::SUPPORT_MESSAGE_MAX],
         ];
 
         if (! $authenticatedUser) {
@@ -30,7 +32,7 @@ class AdminSupportMessageController extends Controller
             $rules['email'] = ['required', 'email', 'max:150'];
         }
 
-        $validated = $request->validate($rules);
+        $validated = $request->validate($rules, $this->supportMessageValidationMessages('message'));
 
         $message = AdminSupportMessage::query()->create([
             'user_id' => $authenticatedUser ? (string) $authenticatedUser->getKey() : null,
@@ -125,8 +127,8 @@ class AdminSupportMessageController extends Controller
         }
 
         $validated = $request->validate([
-            'admin_reply' => ['required', 'string', 'max:2000'],
-        ]);
+            'admin_reply' => ['required', 'string', 'max:'.self::SUPPORT_MESSAGE_MAX],
+        ], $this->supportMessageValidationMessages('admin_reply'));
 
         $message->admin_reply = trim((string) $validated['admin_reply']);
         $message->status = 'replied';
@@ -239,6 +241,18 @@ class AdminSupportMessageController extends Controller
                 'name' => (string) $message->repliedByAdmin->name,
                 'email' => (string) $message->repliedByAdmin->email,
             ] : null,
+        ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function supportMessageValidationMessages(string $field): array
+    {
+        return [
+            "{$field}.required" => 'Pesan wajib diisi.',
+            "{$field}.string" => 'Pesan harus berupa teks.',
+            "{$field}.max" => 'Pesan terlalu panjang. Ringkas pesan maksimal 2000 karakter.',
         ];
     }
 }

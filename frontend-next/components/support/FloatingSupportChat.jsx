@@ -22,6 +22,7 @@ const INITIAL_GUEST_FORM = {
 const INITIAL_COMPOSER_FORM = {
   message: "",
 };
+const SUPPORT_MESSAGE_LIMIT = 2000;
 
 export default function FloatingSupportChat() {
   const pathname = usePathname();
@@ -227,6 +228,13 @@ export default function FloatingSupportChat() {
   async function handleStartConversation(event) {
     event.preventDefault();
 
+    const nextMessage = isLoggedIn ? composerForm.message : guestForm.message;
+
+    if (nextMessage.trim().length > SUPPORT_MESSAGE_LIMIT) {
+      setError("Pesan terlalu panjang. Ringkas pesan maksimal 2000 karakter.");
+      return;
+    }
+
     try {
       setIsSubmitting(true);
       resetState();
@@ -277,6 +285,11 @@ export default function FloatingSupportChat() {
     event.preventDefault();
 
     if (!conversationId || isConversationClosed) {
+      return;
+    }
+
+    if (composerForm.message.trim().length > SUPPORT_MESSAGE_LIMIT) {
+      setError("Pesan terlalu panjang. Ringkas pesan maksimal 2000 karakter.");
       return;
     }
 
@@ -475,6 +488,10 @@ export default function FloatingSupportChat() {
                           placeholder="Tulis pesan kamu..."
                           className="w-full resize-none rounded-[1.5rem] border border-slate-200 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-200"
                         />
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                          <span>Jangan kirim password, API key, atau data sensitif.</span>
+                          <span>{composerForm.message.length}/{SUPPORT_MESSAGE_LIMIT}</span>
+                        </div>
                       </div>
                       <button
                         type="submit"
@@ -537,6 +554,10 @@ function MessageField({ value, onChange, name }) {
         placeholder="Contoh: Saya tidak bisa generate PRD karena token habis."
         className="resize-none rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-200"
       />
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+        <span>Jangan kirim password, API key, atau data sensitif.</span>
+        <span>{value.length}/{SUPPORT_MESSAGE_LIMIT}</span>
+      </div>
     </label>
   );
 }
@@ -616,6 +637,10 @@ function CompactMessageField({ value, onChange, name }) {
         placeholder="Contoh: Saya lupa password dan tidak bisa login."
         className="resize-none rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-200"
       />
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+        <span>Jangan kirim password, API key, atau data sensitif.</span>
+        <span>{value.length}/{SUPPORT_MESSAGE_LIMIT}</span>
+      </div>
     </label>
   );
 }

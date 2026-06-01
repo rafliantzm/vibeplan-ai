@@ -1,7 +1,5 @@
-import AdminSupportConversationDetailClient from "@/components/admin/AdminSupportConversationDetailClient";
+import { redirect } from "next/navigation";
 
-export default async function Page({ params }) {
-  const { id } = await params;
-
-  return <AdminSupportConversationDetailClient conversationId={id} />;
+export default async function Page() {
+  redirect("/admin/support-conversations");
 }

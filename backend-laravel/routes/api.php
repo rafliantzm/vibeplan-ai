@@ -66,6 +66,8 @@ Route::middleware('auth.token')->group(function (): void {
         Route::get('/support/conversations', [SupportChatController::class, 'adminIndex']);
         Route::get('/support/conversations/{id}', [SupportChatController::class, 'adminShow']);
         Route::post('/support/conversations/{id}/messages', [SupportChatController::class, 'adminPostMessage']);
+        Route::delete('/support/conversations/{id}', [SupportChatController::class, 'adminDestroy']);
+        Route::delete('/support/conversations/{id}/messages/{messageId}', [SupportChatController::class, 'adminDestroyMessage']);
         Route::patch('/support/conversations/{id}/close', [SupportChatController::class, 'adminClose']);
         Route::patch('/support/conversations/{id}/reopen', [SupportChatController::class, 'adminReopen']);
         Route::get('/users', [AdminUserController::class, 'index']);

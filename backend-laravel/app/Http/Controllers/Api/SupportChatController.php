@@ -15,6 +15,7 @@ use Illuminate\Support\Carbon;
 class SupportChatController extends Controller
 {
     private const ACTIVE_STATUSES = ['open', 'waiting_admin', 'waiting_user'];
+    private const SUPPORT_MESSAGE_MAX = 2000;
 
     public function __construct(
         private readonly UserActivityLogger $activityLogger,
@@ -25,7 +26,7 @@ class SupportChatController extends Controller
     {
         $authenticatedUser = $this->resolveAuthenticatedUser($request);
         $rules = [
-            'message' => ['required', 'string', 'max:2000'],
+            'message' => ['required', 'string', 'max:'.self::SUPPORT_MESSAGE_MAX],
         ];
 
         if ($authenticatedUser) {
@@ -37,7 +38,7 @@ class SupportChatController extends Controller
             $rules['email'] = ['required', 'email', 'max:150'];
         }
 
-        $validated = $request->validate($rules);
+        $validated = $request->validate($rules, $this->supportMessageValidationMessages());
         $messageContent = trim((string) $validated['message']);
 
         $conversation = $this->findReusableConversation(
@@ -132,14 +133,14 @@ class SupportChatController extends Controller
 
         $authenticatedUser = $this->resolveAuthenticatedUser($request);
         $rules = [
-            'message' => ['required', 'string', 'max:2000'],
+            'message' => ['required', 'string', 'max:'.self::SUPPORT_MESSAGE_MAX],
         ];
 
         if (! $authenticatedUser) {
             $rules['guest_session_id'] = ['required', 'string', 'max:150'];
         }
 
-        $validated = $request->validate($rules);
+        $validated = $request->validate($rules, $this->supportMessageValidationMessages());
         $guestSessionId = (string) ($validated['guest_session_id'] ?? '');
 
         if (! $this->canAccessConversation($conversation, $authenticatedUser, $guestSessionId)) {
@@ -258,8 +259,8 @@ class SupportChatController extends Controller
         }
 
         $validated = $request->validate([
-            'message' => ['required', 'string', 'max:2000'],
-        ]);
+            'message' => ['required', 'string', 'max:'.self::SUPPORT_MESSAGE_MAX],
+        ], $this->supportMessageValidationMessages());
 
         $this->appendMessage(
             $conversation,
@@ -284,6 +285,86 @@ class SupportChatController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Pesan admin berhasil dikirim.',
+            'data' => $this->conversationData((string) $conversation->getKey()),
+        ]);
+    }
+
+    public function adminDestroy(Request $request, string $id): JsonResponse
+    {
+        $conversation = SupportConversation::query()->find($id);
+        $admin = $request->user();
+
+        if (! $conversation) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Percakapan support tidak ditemukan.',
+            ], 404);
+        }
+
+        SupportChatMessage::query()
+            ->where('conversation_id', (string) $conversation->getKey())
+            ->delete();
+
+        $conversation->delete();
+
+        $this->activityLogger->log(
+            $request,
+            'support_conversation_deleted',
+            'Admin menghapus percakapan support beserta seluruh pesan di dalamnya.',
+            [
+                'conversation_id' => (string) $id,
+            ],
+            $admin,
+            $conversation->user,
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Percakapan berhasil dihapus.',
+        ]);
+    }
+
+    public function adminDestroyMessage(Request $request, string $id, string $messageId): JsonResponse
+    {
+        $conversation = SupportConversation::query()->find($id);
+        $admin = $request->user();
+
+        if (! $conversation) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Percakapan support tidak ditemukan.',
+            ], 404);
+        }
+
+        $message = SupportChatMessage::query()
+            ->where('conversation_id', (string) $conversation->getKey())
+            ->find($messageId);
+
+        if (! $message) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Pesan support tidak ditemukan.',
+            ], 404);
+        }
+
+        $message->delete();
+        $this->refreshConversationSummary($conversation);
+
+        $this->activityLogger->log(
+            $request,
+            'support_message_deleted',
+            'Admin menghapus satu pesan dari percakapan support.',
+            [
+                'conversation_id' => (string) $id,
+                'message_id' => (string) $messageId,
+            ],
+            $admin,
+            $conversation->user,
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Pesan berhasil dihapus.',
             'data' => $this->conversationData((string) $conversation->getKey()),
         ]);
     }
@@ -453,6 +534,29 @@ class SupportChatController extends Controller
         }
     }
 
+    private function refreshConversationSummary(SupportConversation $conversation): void
+    {
+        $conversationId = (string) $conversation->getKey();
+        $latestMessage = SupportChatMessage::query()
+            ->where('conversation_id', $conversationId)
+            ->orderByDesc('created_at')
+            ->first();
+
+        $conversation->last_message = $latestMessage?->message ?? '';
+        $conversation->last_message_at = $latestMessage?->created_at;
+        $conversation->unread_for_admin = SupportChatMessage::query()
+            ->where('conversation_id', $conversationId)
+            ->whereIn('sender_type', ['guest', 'user'])
+            ->whereNull('read_at')
+            ->count();
+        $conversation->unread_for_user = SupportChatMessage::query()
+            ->where('conversation_id', $conversationId)
+            ->where('sender_type', 'admin')
+            ->whereNull('read_at')
+            ->count();
+        $conversation->save();
+    }
+
     /**
      * @return array{conversation: array<string, mixed>, messages: array<int, array<string, mixed>>}
      */
@@ -536,5 +640,17 @@ class SupportChatController extends Controller
         }
 
         return $token->user;
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function supportMessageValidationMessages(): array
+    {
+        return [
+            'message.required' => 'Pesan wajib diisi.',
+            'message.string' => 'Pesan harus berupa teks.',
+            'message.max' => 'Pesan terlalu panjang. Ringkas pesan maksimal 2000 karakter.',
+        ];
     }
 }
