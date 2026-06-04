@@ -15,6 +15,7 @@ class AiSetting extends Model
         'provider',
         'masked_api_key',
         'model',
+        'fallback_models',
         'base_url',
         'updated_by',
         'updated_at',
@@ -24,6 +25,7 @@ class AiSetting extends Model
     {
         return [
             'updated_at' => 'datetime',
+            'fallback_models' => 'array',
         ];
     }
 

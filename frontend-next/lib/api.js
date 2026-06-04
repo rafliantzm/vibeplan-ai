@@ -3,8 +3,17 @@ import { clearSession, getToken, setSession, updateStoredUser } from "@/lib/auth
 import { buildMarkdownFilename, extractFilename } from "@/lib/utils";
 
 const DEFAULT_TIMEOUT_MS = 30000;
-const GENERATE_TIMEOUT_MS = 120000;
 const ADMIN_AI_VALIDATE_TIMEOUT_MS = 30000;
+
+function getNumericEnv(value, fallback) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) && numericValue > 0 ? numericValue : fallback;
+}
+
+const GENERATE_TIMEOUT_MS = Math.max(
+  300000,
+  getNumericEnv(process.env.NEXT_PUBLIC_GENERATE_TIMEOUT_MS, 300000),
+);
 
 class ApiError extends Error {
   constructor(message, options = {}) {
@@ -30,6 +39,10 @@ function buildUrl(path, query = {}) {
   return url.toString();
 }
 
+export function getGoogleAuthRedirectUrl() {
+  return buildUrl("/api/auth/google/redirect");
+}
+
 async function parseJsonResponse(response) {
   const contentType = response.headers.get("content-type") || "";
 
@@ -42,6 +55,10 @@ async function parseJsonResponse(response) {
 
 function getAbortMessage() {
   return "Request terlalu lama diproses. Silakan coba lagi, gunakan Mode Ringkas, atau periksa koneksi backend.";
+}
+
+function getNetworkFailureMessage() {
+  return "Backend belum dapat dijangkau. Pastikan Laravel server aktif dan coba lagi beberapa saat.";
 }
 
 function createTimeoutSignal(timeoutMs) {
@@ -78,11 +95,16 @@ async function requestJson(path, options = {}) {
     if (error?.name === "AbortError") {
       throw new ApiError(getAbortMessage(), {
         status: 408,
+        errorCode: "REQUEST_TIMEOUT",
         payload: { error_code: "REQUEST_TIMEOUT" },
       });
     }
 
-    throw error;
+    throw new ApiError(getNetworkFailureMessage(), {
+      status: 503,
+      errorCode: "NETWORK_ERROR",
+      payload: { error_code: "NETWORK_ERROR" },
+    });
   } finally {
     clear();
   }
@@ -132,11 +154,16 @@ async function requestFormData(path, formData, options = {}) {
     if (error?.name === "AbortError") {
       throw new ApiError(getAbortMessage(), {
         status: 408,
+        errorCode: "REQUEST_TIMEOUT",
         payload: { error_code: "REQUEST_TIMEOUT" },
       });
     }
 
-    throw error;
+    throw new ApiError(getNetworkFailureMessage(), {
+      status: 503,
+      errorCode: "NETWORK_ERROR",
+      payload: { error_code: "NETWORK_ERROR" },
+    });
   } finally {
     clear();
   }
@@ -549,6 +576,24 @@ export async function adminReopenSupportConversation(id) {
 
 export async function getAdminAiDiagnostics() {
   return requestJson(`/api/admin/ai-settings/diagnostics`, {
+    method: "GET",
+  });
+}
+
+export async function getAdminAiModels(params = {}) {
+  const queryString = new URLSearchParams();
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      queryString.set(key, String(value));
+    }
+  });
+
+  const path = queryString.toString()
+    ? `/api/admin/ai-settings/models?${queryString.toString()}`
+    : `/api/admin/ai-settings/models`;
+
+  return requestJson(path, {
     method: "GET",
   });
 }

@@ -5,16 +5,16 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\AuthToken;
 use App\Models\User;
+use App\Services\AuthSessionService;
 use App\Services\UserActivityLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Str;
 
 class AuthController extends Controller
 {
     public function __construct(
+        private readonly AuthSessionService $authSessionService,
         private readonly UserActivityLogger $activityLogger,
     ) {
     }
@@ -44,7 +44,7 @@ class AuthController extends Controller
             'status' => 'active',
         ]);
 
-        [$plainToken] = $this->issueAuthToken($user);
+        [$plainToken] = $this->authSessionService->issueAuthToken($user);
 
         $this->activityLogger->log(
             $request,
@@ -58,7 +58,7 @@ class AuthController extends Controller
         return response()->json([
             'success' => true,
             'token' => $plainToken,
-            'user' => $this->userPayload($user),
+            'user' => $this->authSessionService->userPayload($user),
         ], 201);
     }
 
@@ -85,7 +85,7 @@ class AuthController extends Controller
             ], 403);
         }
 
-        [$plainToken] = $this->issueAuthToken($user);
+        [$plainToken] = $this->authSessionService->issueAuthToken($user);
 
         $this->activityLogger->log(
             $request,
@@ -99,7 +99,7 @@ class AuthController extends Controller
         return response()->json([
             'success' => true,
             'token' => $plainToken,
-            'user' => $this->userPayload($user),
+            'user' => $this->authSessionService->userPayload($user),
         ]);
     }
 
@@ -107,7 +107,7 @@ class AuthController extends Controller
     {
         return response()->json([
             'success' => true,
-            'user' => $this->userPayload($request->user()),
+            'user' => $this->authSessionService->userPayload($request->user()),
         ]);
     }
 
@@ -135,37 +135,5 @@ class AuthController extends Controller
             'success' => true,
             'message' => 'Logout berhasil.',
         ]);
-    }
-
-    /**
-     * @return array{0: string, 1: AuthToken}
-     */
-    private function issueAuthToken(User $user): array
-    {
-        $plainToken = Str::random(64);
-        $token = AuthToken::query()->create([
-            'user_id' => (string) $user->getKey(),
-            'token_hash' => hash('sha256', $plainToken),
-            'expires_at' => Carbon::now()->addDays(30),
-        ]);
-
-        return [$plainToken, $token];
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function userPayload(?User $user): array
-    {
-        return [
-            'id' => (string) $user?->getKey(),
-            'name' => (string) $user?->name,
-            'display_name' => (string) ($user?->display_name ?: $user?->name),
-            'email' => (string) $user?->email,
-            'avatar_url' => $user?->avatar_url,
-            'role' => (string) ($user?->role ?? 'user'),
-            'token_balance' => (int) ($user?->token_balance ?? 0),
-            'status' => (string) ($user?->status ?? 'active'),
-        ];
     }
 }

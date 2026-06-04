@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\GenerateController;
+use App\Http\Controllers\Api\GoogleAuthController;
 use App\Http\Controllers\Api\HistoryController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\AuthPasswordResetController;
@@ -9,12 +10,16 @@ use App\Http\Controllers\Api\AdminSupportMessageController;
 use App\Http\Controllers\Api\SupportChatController;
 use App\Http\Controllers\Api\AdminUserController;
 use App\Http\Controllers\Api\AdminTokenResetRequestController;
+use App\Http\Controllers\Api\AiHealthController;
 use App\Http\Controllers\Api\ProfileController;
+use App\Http\Controllers\Api\DatabaseHealthController;
 use App\Http\Controllers\Api\TeamMemberController;
 use App\Http\Controllers\Api\TokenResetRequestController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('auth')->group(function (): void {
+    Route::get('/google/redirect', [GoogleAuthController::class, 'redirect']);
+    Route::get('/google/callback', [GoogleAuthController::class, 'callback']);
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/login', [AuthController::class, 'login']);
     Route::post('/forgot-password', [AuthPasswordResetController::class, 'forgotPassword']);
@@ -27,6 +32,8 @@ Route::prefix('auth')->group(function (): void {
 });
 
 Route::get('/team-members', [TeamMemberController::class, 'index']);
+Route::get('/health/database', [DatabaseHealthController::class, 'show']);
+Route::get('/health/ai', [AiHealthController::class, 'show']);
 Route::post('/support/messages', [AdminSupportMessageController::class, 'store']);
 Route::post('/support/conversations', [SupportChatController::class, 'storeConversation']);
 Route::get('/support/conversations/{id}/messages', [SupportChatController::class, 'getConversationMessages']);
@@ -57,6 +64,7 @@ Route::middleware('auth.token')->group(function (): void {
         Route::patch('/token-reset-requests/{id}', [AdminTokenResetRequestController::class, 'update']);
         Route::get('/ai-settings', [AdminAiSettingsController::class, 'show']);
         Route::get('/ai-settings/diagnostics', [AdminAiSettingsController::class, 'diagnostics']);
+        Route::get('/ai-settings/models', [AdminAiSettingsController::class, 'availableModels']);
         Route::post('/ai-settings/validate-key', [AdminAiSettingsController::class, 'validateKey']);
         Route::post('/ai-settings/update-key', [AdminAiSettingsController::class, 'updateKey']);
         Route::get('/support/messages', [AdminSupportMessageController::class, 'index']);

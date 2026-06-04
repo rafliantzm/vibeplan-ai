@@ -116,15 +116,21 @@ return [
 
         'mongodb' => [
             'driver' => 'mongodb',
-            'dsn' => env('MONGODB_URI', 'mongodb://127.0.0.1:27017'),
-            'host' => env('MONGODB_HOST', '127.0.0.1'),
-            'port' => env('MONGODB_PORT', 27017),
+            'dsn' => env('MONGODB_URI') ?: null,
+            'host' => env('MONGODB_URI') ? null : env('MONGODB_HOST', '127.0.0.1'),
+            'port' => env('MONGODB_URI') ? null : env('MONGODB_PORT', 27017),
             'database' => env('MONGODB_DATABASE', 'vibeplan_ai'),
-            'username' => env('MONGODB_USERNAME'),
-            'password' => env('MONGODB_PASSWORD'),
+            'username' => env('MONGODB_URI') ? null : env('MONGODB_USERNAME'),
+            'password' => env('MONGODB_URI') ? null : env('MONGODB_PASSWORD'),
             'options' => array_filter([
                 'database' => env('MONGODB_AUTH_DATABASE'),
-            ]),
+                'tls' => env('MONGODB_TLS'),
+                'tlsCAFile' => env('MONGODB_TLS_CA_FILE'),
+                'tlsAllowInvalidCertificates' => env('MONGODB_TLS_ALLOW_INVALID_CERTIFICATES'),
+                'serverSelectionTimeoutMS' => env('MONGODB_SERVER_SELECTION_TIMEOUT_MS'),
+                'connectTimeoutMS' => env('MONGODB_CONNECT_TIMEOUT_MS'),
+                'socketTimeoutMS' => env('MONGODB_SOCKET_TIMEOUT_MS'),
+            ], static fn ($value) => $value !== null && $value !== ''),
         ],
 
     ],

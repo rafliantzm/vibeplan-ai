@@ -16,6 +16,10 @@ class User extends Authenticatable
         'display_name',
         'email',
         'password_hash',
+        'google_id',
+        'provider',
+        'email_verified_at',
+        'is_active',
         'avatar_url',
         'avatar_path',
         'role',
@@ -36,6 +40,10 @@ class User extends Authenticatable
             'avatar_url' => 'string',
             'avatar_path' => 'string',
             'display_name' => 'string',
+            'google_id' => 'string',
+            'provider' => 'string',
+            'email_verified_at' => 'datetime',
+            'is_active' => 'boolean',
         ];
     }
 

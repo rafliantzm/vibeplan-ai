@@ -50,6 +50,15 @@ export function setSession(token, user) {
   emitAuthChanged();
 }
 
+export function setTokenOnly(token) {
+  if (!canUseStorage()) {
+    return;
+  }
+
+  window.localStorage.setItem(TOKEN_KEY, token);
+  emitAuthChanged();
+}
+
 export function clearSession() {
   if (!canUseStorage()) {
     return;

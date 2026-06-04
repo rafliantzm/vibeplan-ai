@@ -1,6 +1,17 @@
-export const API_URL =
-  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ||
-  "http://127.0.0.1:8000";
+function normalizeApiBaseUrl(value) {
+  const normalized = String(value || "")
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/api$/i, "");
+
+  return normalized || "http://127.0.0.1:8000";
+}
+
+export const API_URL = normalizeApiBaseUrl(
+  process.env.NEXT_PUBLIC_API_BASE_URL
+  || process.env.NEXT_PUBLIC_API_URL
+  || "http://127.0.0.1:8000",
+);
 
 export const GENERATION_TYPES = [
   {

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="../shared.css">
+<title>Arsitektur Sistem</title>
+</head>
+<body>
+<div class="canvas">
+  <div class="frame-line"></div>
+  <p class="kicker">Slide 9 · Arsitektur Sistem</p>
+  <h1 class="section-title" style="margin-top: 10pt;">Arsitektur Sistem VibePlan AI</h1>
+  <div class="divider"></div>
+
+  <div class="grid-3" style="margin-top: 18px;">
+    <div class="flow-box">
+      <p><strong>User / Admin</strong><br>Browser desktop atau mobile untuk form, history, result, dan panel admin.</p>
+    </div>
+    <div class="flow-box">
+      <p><strong>Next.js Frontend</strong><br>Menangani UI, validasi input, tampilan hasil, dan pengalaman pengguna.</p>
+    </div>
+    <div class="flow-box">
+      <p><strong>Laravel Backend API</strong><br>Menangani auth, validasi, prompt orchestration, admin operations, dan storage.</p>
+    </div>
+  </div>
+
+  <div class="grid-2" style="margin-top: 16px;">
+    <div class="card">
+      <p class="label">Lapisan Data</p>
+      <h3>MongoDB Atlas</h3>
+      <div class="compact-list">
+        <p class="bullet">Menyimpan hasil generate AI dan `markdown_content`.</p>
+        <p class="bullet">Menyimpan user, history, token request, support chat, dan setting admin.</p>
+        <p class="bullet">Mendukung pembukaan ulang result detail dan download Markdown.</p>
+      </div>
+    </div>
+    <div class="card">
+      <p class="label">Lapisan AI</p>
+      <h3>Provider AI dikonfigurasi di backend</h3>
+      <div class="compact-list">
+        <p class="bullet">Backend menyusun prompt sesuai mode generate dan policy quality gate.</p>
+        <p class="bullet">Provider dan model dapat diganti tanpa membocorkan API key ke frontend.</p>
+        <p class="bullet">Fallback model menjaga proses generate tetap stabil saat provider utama bermasalah.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="micro-card-grid" style="margin-top: 14px;">
+    <div class="micro-card">
+      <p class="label">Prinsip 01</p>
+      <p>Frontend fokus pada pengalaman pengguna dan navigasi workspace.</p>
+    </div>
+    <div class="micro-card">
+      <p class="label">Prinsip 02</p>
+      <p>Backend fokus pada logika bisnis, keamanan, dan integrasi AI.</p>
+    </div>
+    <div class="micro-card">
+      <p class="label">Prinsip 03</p>
+      <p>Database menjadi pusat penyimpanan hasil generate dan operasional sistem.</p>
+    </div>
+    <div class="micro-card">
+      <p class="label">Prinsip 04</p>
+      <p>Pemisahan layer membuat aplikasi lebih aman, maintainable, dan mudah dipresentasikan.</p>
+    </div>
+  </div>
+
+  <div class="footer-note">
+    <p>Arsitektur dipisah agar maintainable, aman, dan mudah dijelaskan saat presentasi.</p>
+    <p>09</p>
+  </div>
+</div>
+</body>
+</html>

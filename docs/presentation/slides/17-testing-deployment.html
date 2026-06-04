@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="../shared.css">
+<title>Testing dan Deployment</title>
+</head>
+<body>
+<div class="canvas">
+  <div class="frame-line"></div>
+  <p class="kicker">Slide 17 · Testing dan Deployment</p>
+  <h1 class="section-title" style="margin-top: 10pt;">Kualitas Teknis, Testing, Repository, dan Deployment</h1>
+  <div class="divider"></div>
+
+  <div class="grid-2" style="margin-top: 22pt;">
+    <div class="card">
+      <p class="label">Testing</p>
+      <p class="bullet">Backend diuji dengan `php artisan test`.</p>
+      <p class="bullet">Frontend diuji dengan `npm run lint` dan `npm run build`.</p>
+      <p class="bullet">Tersedia `docs/TESTING_CHECKLIST.md` untuk validasi fitur utama dan admin.</p>
+      <p class="bullet">Checklist mencakup generate, history, profile, admin, support chat, dan responsive UI.</p>
+    </div>
+    <div class="card">
+      <p class="label">Deployment Readiness</p>
+      <p class="bullet">Frontend siap dipasang ke Vercel / platform serupa.</p>
+      <p class="bullet">Backend Laravel dipisah agar mudah di-host secara mandiri.</p>
+      <p class="bullet">Panduan deployment dan environment sudah disiapkan pada docs.</p>
+      <p class="bullet">API key aman karena disimpan di backend `.env`, bukan di frontend.</p>
+    </div>
+  </div>
+
+  <div class="grid-3" style="margin-top: 18pt;">
+    <div class="card">
+      <p class="label">Repository</p>
+      <p>Monorepo tersusun dalam folder `frontend-next`, `backend-laravel`, `docs`, dan `screenshot`.</p>
+    </div>
+    <div class="card">
+      <p class="label">Dokumentasi</p>
+      <p>README, user guide, API documentation, deployment guide, dan demo script tersedia.</p>
+    </div>
+    <div class="card">
+      <p class="label">Demo Layak UTS</p>
+      <p>Project menyiapkan web app fungsional, fitur AI nyata, dokumentasi, dan alur presentasi yang jelas.</p>
+    </div>
+  </div>
+
+  <div class="footer-note">
+    <p>Slide ini menjawab aspek penilaian technical implementation, dokumentasi, dan kesiapan demo.</p>
+    <p>17</p>
+  </div>
+</div>
+</body>
+</html>

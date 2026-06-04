@@ -12,13 +12,17 @@ use App\Services\MarkdownService;
 use App\Services\PromptService;
 use App\Services\UploadedPrdPreparationService;
 use App\Services\UserActivityLogger;
+use App\Support\DatabaseErrorResponder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 use Throwable;
 
 class GenerateController extends Controller
 {
+    private const PROJECT_IDEA_MAX_LENGTH = 15000;
+
     public function __construct(
         private readonly AiService $aiService,
         private readonly PromptService $promptService,
@@ -46,10 +50,12 @@ class GenerateController extends Controller
     private function generate(Request $request, string $generationType): JsonResponse
     {
         if (! extension_loaded('mongodb')) {
-            return response()->json([
-                'message' => 'MongoDB PHP extension is not installed. Install ext-mongodb before using the generation endpoints.',
-            ], 500);
+            return DatabaseErrorResponder::extensionMissing('generation endpoints');
         }
+
+        $this->extendExecutionWindow();
+        $requestStartedAt = microtime(true);
+        $this->logGenerateRequestReceived($request, $generationType);
 
         $this->normalizeWorkflowInputs($request, $generationType);
         $validated = $request->validate($this->rulesFor($generationType));
@@ -88,8 +94,20 @@ class GenerateController extends Controller
                 'max_tokens' => $maxTokens,
             ]);
 
-            if ($this->isTruncatedResponse($aiResult)) {
-                if ($this->shouldRetryPrdNormalForm($generationType, $validated)) {
+            if ($this->shouldContinueGeneration($generationType, $validated, $context, $aiResult)) {
+                $continuedResult = $this->continueTruncatedGeneration(
+                    $generationType,
+                    $project,
+                    $context,
+                    $validated,
+                    $aiResult,
+                    $maxTokens,
+                );
+
+                if ($continuedResult !== null) {
+                    $aiResult = $continuedResult;
+                    $retryUsed = true;
+                } elseif ($this->shouldRetryPrdNormalForm($generationType, $validated)) {
                     $retryContext = [...$context, 'concise_retry' => true];
                     $retryPrompt = $this->promptService->build(
                         $generationType,
@@ -97,11 +115,12 @@ class GenerateController extends Controller
                         false,
                         $retryContext,
                     );
-                    $retryResult = $this->aiService->generateMarkdown($retryPrompt, [
-                        'max_tokens' => $maxTokens,
-                    ]);
+                    $retryResult = $this->aiService->generateMarkdown(
+                        $retryPrompt,
+                        $this->continuationAiOptions($generationType, $maxTokens)
+                    );
 
-                    if (! $this->isTruncatedResponse($retryResult)) {
+                    if (! $this->shouldContinueGeneration($generationType, $validated, $retryContext, $retryResult)) {
                         $aiResult = $retryResult;
                         $prompt = $retryPrompt;
                         $context = $retryContext;
@@ -115,6 +134,33 @@ class GenerateController extends Controller
                             $this->shouldUseCompactMode($generationType, $validated),
                         );
                     }
+                } elseif ($this->shouldRetryNextStepNormalMode($generationType, $validated)) {
+                    $retryContext = [...$context, 'normal_mode_retry' => true];
+                    $retryPrompt = $this->promptService->build(
+                        $generationType,
+                        $project,
+                        false,
+                        $retryContext,
+                    );
+                    $retryResult = $this->aiService->generateMarkdown(
+                        $retryPrompt,
+                        $this->continuationAiOptions($generationType, $maxTokens)
+                    );
+
+                    if (! $this->shouldContinueGeneration($generationType, $validated, $retryContext, $retryResult)) {
+                        $aiResult = $retryResult;
+                        $prompt = $retryPrompt;
+                        $context = $retryContext;
+                        $retryUsed = true;
+                    } else {
+                        return $this->truncatedResponse(
+                            $generationType,
+                            $maxTokens,
+                            $retryResult,
+                            true,
+                            false,
+                        );
+                    }
                 } elseif ($this->shouldRetryCodingPromptNormalMode($generationType, $validated)) {
                     $retryContext = [...$context, 'normal_mode_retry' => true];
                     $retryPrompt = $this->promptService->build(
@@ -123,11 +169,12 @@ class GenerateController extends Controller
                         false,
                         $retryContext,
                     );
-                    $retryResult = $this->aiService->generateMarkdown($retryPrompt, [
-                        'max_tokens' => $maxTokens,
-                    ]);
+                    $retryResult = $this->aiService->generateMarkdown(
+                        $retryPrompt,
+                        $this->continuationAiOptions($generationType, $maxTokens)
+                    );
 
-                    if (! $this->isTruncatedResponse($retryResult)) {
+                    if (! $this->shouldContinueGeneration($generationType, $validated, $retryContext, $retryResult)) {
                         $aiResult = $retryResult;
                         $prompt = $retryPrompt;
                         $context = $retryContext;
@@ -250,6 +297,7 @@ class GenerateController extends Controller
                 ],
             ], 201);
         } catch (TokenLimitExceededException $exception) {
+            $this->logGenerateRequestFailed($requestStartedAt, $generationType, $exception);
             report($exception);
 
             return response()->json([
@@ -260,6 +308,7 @@ class GenerateController extends Controller
                 'actions' => ['compact_mode', 'request_admin_help'],
             ], 429);
         } catch (AiProviderException $exception) {
+            $this->logGenerateRequestFailed($requestStartedAt, $generationType, $exception);
             report($exception);
 
             if ($exception->errorCode() === 'INPUT_TOO_LARGE') {
@@ -276,21 +325,38 @@ class GenerateController extends Controller
                 'success' => false,
                 'error_code' => $exception->errorCode(),
                 'message' => $exception->getMessage(),
+                'user_message' => $exception->userMessage() ?? $exception->getMessage(),
+                'details' => config('app.debug')
+                    ? ($exception->rawProviderMessage() ?? $exception->getMessage())
+                    : null,
             ], $exception->status());
         } catch (RuntimeException $exception) {
-            return response()->json([
-                'message' => $exception->getMessage(),
-                'file' => $exception->getFile(),
-                'line' => $exception->getLine(),
-            ], 500);
+            $this->logGenerateRequestFailed($requestStartedAt, $generationType, $exception);
+            return DatabaseErrorResponder::isMongoConnectivityError($exception)
+                ? DatabaseErrorResponder::mongoUnavailable($exception)
+                : response()->json([
+                    'success' => false,
+                    'message' => $exception->getMessage(),
+                    'details' => config('app.debug')
+                        ? ['file' => $exception->getFile(), 'line' => $exception->getLine()]
+                        : null,
+                ], 500);
         } catch (Throwable $exception) {
+            $this->logGenerateRequestFailed($requestStartedAt, $generationType, $exception);
             report($exception);
 
-            return response()->json([
-                'message' => 'Failed to generate content. Check MongoDB and AI service configuration, then try again.',
-                'file' => $exception->getFile(),
-                'line' => $exception->getLine(),
-            ], 500);
+            return DatabaseErrorResponder::isMongoConnectivityError($exception)
+                ? DatabaseErrorResponder::mongoUnavailable(
+                    $exception,
+                    'Database sedang tidak dapat diakses. Periksa konfigurasi MongoDB Atlas atau coba lagi nanti.'
+                )
+                : response()->json([
+                    'success' => false,
+                    'message' => 'Failed to generate content. Check MongoDB and AI service configuration, then try again.',
+                    'details' => config('app.debug')
+                        ? ['file' => $exception->getFile(), 'line' => $exception->getLine()]
+                        : null,
+                ], 500);
         }
     }
 
@@ -305,10 +371,10 @@ class GenerateController extends Controller
                 ? ['required_without_all:project_id,source_generation_id,prd_markdown', 'string', 'max:150']
                 : ['required_without:project_id', 'string', 'max:150']);
         $projectIdeaRule = $generationType === 'coding-prompt'
-            ? ['nullable', 'string', 'max:5000']
+            ? ['nullable', 'string', 'max:'.self::PROJECT_IDEA_MAX_LENGTH]
             : ($generationType === 'next-step'
-                ? ['required_without_all:project_id,source_generation_id,prd_markdown', 'string', 'max:5000']
-                : ['required_without:project_id', 'string', 'max:5000']);
+                ? ['required_without_all:project_id,source_generation_id,prd_markdown', 'string', 'max:'.self::PROJECT_IDEA_MAX_LENGTH]
+                : ['required_without:project_id', 'string', 'max:'.self::PROJECT_IDEA_MAX_LENGTH]);
 
         $rules = [
             'project_id' => ['nullable', 'string'],
@@ -562,16 +628,87 @@ class GenerateController extends Controller
      */
     private function resolveMaxTokens(string $generationType, array $validated): int
     {
-        if ($this->shouldUseCompactMode($generationType, $validated)) {
-            return (int) config('services.ai.compact_max_tokens', 1200);
+        $compactMode = $this->shouldUseCompactMode($generationType, $validated);
+        $configuredTokens = $compactMode
+            ? (int) config('services.ai.compact_max_tokens', 600)
+            : match ($generationType) {
+            'prd' => (int) config('services.ai.prd_max_tokens', 2800),
+            'next-step' => (int) config('services.ai.next_step_max_tokens', 1800),
+            'coding-prompt' => (int) config('services.ai.coding_prompt_max_tokens', 1400),
+            default => (int) config('services.ai.max_tokens', 1200),
+        };
+
+        return $this->capTokensForProvider($generationType, $configuredTokens, $compactMode);
+    }
+
+    private function capTokensForProvider(string $generationType, int $configuredTokens, bool $compactMode): int
+    {
+        $provider = strtolower((string) config('services.ai.provider', ''));
+        $model = strtolower((string) config('services.ai.model', ''));
+
+        if ($provider !== 'gemini' || ! str_contains($model, 'gemma')) {
+            return $configuredTokens;
         }
 
-        return match ($generationType) {
-            'prd' => (int) config('services.ai.prd_max_tokens', 2500),
-            'next-step' => (int) config('services.ai.next_step_max_tokens', 2200),
-            'coding-prompt' => (int) config('services.ai.coding_prompt_max_tokens', 3500),
-            default => (int) config('services.ai.max_tokens', 1800),
-        };
+        $cap = $compactMode
+            ? 600
+            : match ($generationType) {
+                'prd' => 1800,
+                'next-step' => 1800,
+                'coding-prompt' => 1600,
+                default => 1200,
+            };
+
+        return min($configuredTokens, $cap);
+    }
+
+    private function logGenerateRequestReceived(Request $request, string $generationType): void
+    {
+        Log::info('Generate request received.', [
+            'generation_type' => $generationType,
+            'generation_mode' => (string) $request->input('generation_mode', 'normal'),
+            'coding_workflow' => $request->input('coding_workflow'),
+            'user_id' => (string) ($request->user()?->getKey() ?? ''),
+            'project_name' => mb_substr((string) $request->input('project_name', ''), 0, 120),
+            'source_generation_id' => $request->input('source_generation_id'),
+            'prd_source_mode' => $request->input('prd_source_mode'),
+            'prompt_source_mode' => $request->input('prompt_source_mode'),
+            'content_lengths' => [
+                'project_idea' => mb_strlen((string) $request->input('project_idea', '')),
+                'initial_prd' => mb_strlen((string) $request->input('initial_prd', '')),
+                'prd_markdown' => mb_strlen((string) $request->input('prd_markdown', '')),
+                'next_step_markdown' => mb_strlen((string) $request->input('next_step_markdown', '')),
+            ],
+        ]);
+    }
+
+    private function logGenerateRequestFailed(float $startedAt, string $generationType, Throwable $exception): void
+    {
+        Log::warning('Generate request failed.', [
+            'generation_type' => $generationType,
+            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+            'exception' => $exception::class,
+            'message' => $exception->getMessage(),
+        ]);
+    }
+
+    private function extendExecutionWindow(): void
+    {
+        $runtimeConfig = $this->aiService->runtimeConfig();
+        $provider = strtolower((string) ($runtimeConfig['provider'] ?? ''));
+        $model = strtolower((string) ($runtimeConfig['model'] ?? ''));
+        $baseTimeout = (int) ($runtimeConfig['timeout'] ?? config('services.ai.timeout', 120));
+        $timeout = max(180, $baseTimeout + 30);
+
+        if ($provider === 'gemini' && str_contains($model, 'gemma')) {
+            $timeout = max(300, $baseTimeout + 180);
+        }
+
+        if (function_exists('set_time_limit')) {
+            @set_time_limit($timeout);
+        }
+
+        @ini_set('max_execution_time', (string) $timeout);
     }
 
     /**
@@ -593,11 +730,22 @@ class GenerateController extends Controller
     }
 
     /**
+     * @param  array<string, mixed>  $validated
+     */
+    private function shouldRetryNextStepNormalMode(string $generationType, array $validated): bool
+    {
+        return $generationType === 'next-step'
+            && ! $this->shouldUseCompactMode($generationType, $validated);
+    }
+
+    /**
      * @param  array<string, mixed>  $aiResult
      */
     private function isTruncatedResponse(array $aiResult): bool
     {
-        if (($aiResult['finish_reason'] ?? null) !== 'length') {
+        $finishReason = strtolower((string) ($aiResult['finish_reason'] ?? ''));
+
+        if (! in_array($finishReason, ['length', 'max_tokens'], true)) {
             return false;
         }
 
@@ -614,6 +762,89 @@ class GenerateController extends Controller
         $lastCharacter = mb_substr($markdown, -1);
 
         return ! in_array($lastCharacter, ['.', '!', '?', '`', '|', ')', ']', '*'], true);
+    }
+
+    /**
+     * @param  array<string, mixed>  $validated
+     * @param  array<string, mixed>  $context
+     * @param  array<string, mixed>  $aiResult
+     */
+    private function shouldContinueGeneration(
+        string $generationType,
+        array $validated,
+        array $context,
+        array $aiResult,
+    ): bool {
+        if ($this->isTruncatedResponse($aiResult)) {
+            return true;
+        }
+
+        if ($this->isMissingExpectedHeadings(
+            $generationType,
+            $this->shouldUseCompactMode($generationType, $validated),
+            $context,
+            (string) ($aiResult['markdown_content'] ?? '')
+        )) {
+            return true;
+        }
+
+        if ($generationType === 'prd') {
+            return $this->isPrdContentTooThin(
+                $this->shouldUseCompactMode($generationType, $validated),
+                (string) ($aiResult['markdown_content'] ?? '')
+            );
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  array<string, mixed>  $context
+     */
+    private function isMissingExpectedHeadings(
+        string $generationType,
+        bool $compactMode,
+        array $context,
+        string $markdown,
+    ): bool {
+        $content = trim($markdown);
+
+        if ($content === '') {
+            return true;
+        }
+
+        $expectedHeadings = $this->promptService->expectedHeadings($generationType, $compactMode, $context);
+
+        foreach ($expectedHeadings as $heading) {
+            if (! $this->markdownContainsHeading($content, $heading)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function markdownContainsHeading(string $markdown, string $heading): bool
+    {
+        $normalizedHeading = trim($heading);
+
+        if ($normalizedHeading === '# PRD') {
+            return preg_match('/^#\s+PRD\b/im', $markdown) === 1;
+        }
+
+        if ($normalizedHeading === '# Next Step Planner') {
+            return preg_match('/^#\s+Next Step Planner\b/im', $markdown) === 1;
+        }
+
+        if ($normalizedHeading === '# Coding Prompt Generator - Mode Ringkas') {
+            return preg_match('/^#\s+Coding Prompt Generator\s*-\s*Mode Ringkas\b/im', $markdown) === 1;
+        }
+
+        if ($normalizedHeading === '# Coding Prompt Generator - Normal Mode') {
+            return preg_match('/^#\s+Coding Prompt Generator\s*-\s*Normal Mode\b/im', $markdown) === 1;
+        }
+
+        return preg_match('/^'.preg_quote($normalizedHeading, '/').'\s*$/im', $markdown) === 1;
     }
 
     /**
@@ -650,6 +881,573 @@ class GenerateController extends Controller
     }
 
     /**
+     * @param  array<string, mixed>  $context
+     * @param  array<string, mixed>  $validated
+     * @param  array<string, mixed>  $aiResult
+     * @return array<string, mixed>|null
+     */
+    private function continueTruncatedGeneration(
+        string $generationType,
+        Project $project,
+        array $context,
+        array $validated,
+        array $aiResult,
+        int $maxTokens,
+    ): ?array {
+        $partialMarkdown = trim((string) ($aiResult['markdown_content'] ?? ''));
+
+        if ($partialMarkdown === '') {
+            return null;
+        }
+
+        $compactMode = $this->shouldUseCompactMode($generationType, $validated);
+        $maxAttempts = $generationType === 'prd' ? 2 : 2;
+        $combinedMarkdown = $partialMarkdown;
+        $latestResult = $aiResult;
+
+        for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
+            if (
+                $generationType === 'prd' &&
+                ! $this->isTruncatedResponse($latestResult) &&
+                ! $this->isMissingExpectedHeadings($generationType, $compactMode, $context, $combinedMarkdown) &&
+                $this->isPrdContentTooThin($compactMode, $combinedMarkdown)
+            ) {
+                $enrichedMarkdown = $this->enrichThinPrdSections(
+                    $project,
+                    $context,
+                    $compactMode,
+                    $combinedMarkdown,
+                    $maxTokens,
+                );
+
+                if ($enrichedMarkdown === null) {
+                    return null;
+                }
+
+                $latestResult['markdown_content'] = $enrichedMarkdown;
+                return $latestResult;
+            }
+
+            $attemptContext = $context;
+            $continuationSourceMarkdown = $combinedMarkdown;
+
+            if ($generationType === 'prd') {
+                $focus = $this->buildPrdContinuationFocus($compactMode, $combinedMarkdown);
+
+                if ($focus !== '') {
+                    $attemptContext['continuation_focus'] = $focus;
+                }
+
+                $attemptContext['partial_context_mode'] = 'condensed_snapshot';
+                $continuationSourceMarkdown = $this->buildPrdContinuationSnapshot($combinedMarkdown);
+            }
+
+            $continuationPrompt = $this->promptService->buildContinuationPrompt(
+                $generationType,
+                $project,
+                $continuationSourceMarkdown,
+                $compactMode,
+                $attemptContext,
+            );
+
+            $continuationResult = $this->aiService->generateMarkdown(
+                $continuationPrompt,
+                $this->continuationAiOptions($generationType, $maxTokens)
+            );
+
+            $mergedMarkdown = $this->mergeMarkdownSegments(
+                $combinedMarkdown,
+                (string) ($continuationResult['markdown_content'] ?? '')
+            );
+
+            if ($mergedMarkdown === '') {
+                return null;
+            }
+
+            $combinedMarkdown = $mergedMarkdown;
+            $latestResult = $continuationResult;
+            $latestResult['markdown_content'] = $combinedMarkdown;
+
+            if (! $this->shouldContinueGeneration($generationType, $validated, $context, $latestResult)) {
+                return $latestResult;
+            }
+        }
+
+        return null;
+    }
+
+    private function enrichThinPrdSections(
+        Project $project,
+        array $context,
+        bool $compactMode,
+        string $markdown,
+        int $maxTokens,
+    ): ?string {
+        $coverage = $this->detectPrdCoverageGaps($compactMode, $markdown);
+        $updatedMarkdown = $markdown;
+
+        if ($coverage['data_model']) {
+            $replacement = $this->generatePrdSectionReplacement(
+                $project,
+                'Data Model & ERD',
+                $compactMode,
+                $updatedMarkdown,
+                $maxTokens
+            );
+
+            if ($replacement === null) {
+                return null;
+            }
+
+            $updatedMarkdown = $this->replacePrdSectionByTitle(
+                $updatedMarkdown,
+                'Data Model & ERD',
+                'API Design',
+                $replacement
+            );
+        }
+
+        if ($coverage['api_design']) {
+            $replacement = $this->generatePrdSectionReplacement(
+                $project,
+                'API Design',
+                $compactMode,
+                $updatedMarkdown,
+                $maxTokens
+            );
+
+            if ($replacement === null) {
+                return null;
+            }
+
+            $updatedMarkdown = $this->replacePrdSectionByTitle(
+                $updatedMarkdown,
+                'API Design',
+                'UI Pages / Screens',
+                $replacement
+            );
+        }
+
+        return trim($updatedMarkdown) !== '' ? $updatedMarkdown : null;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function continuationAiOptions(string $generationType, int $maxTokens): array
+    {
+        $options = [
+            'max_tokens' => $maxTokens,
+        ];
+
+        $runtimeConfig = $this->aiService->runtimeConfig();
+        $provider = strtolower((string) ($runtimeConfig['provider'] ?? ''));
+        $model = strtolower((string) ($runtimeConfig['model'] ?? ''));
+        $fallbackModels = $runtimeConfig['fallback_models'] ?? [];
+
+        if (! is_array($fallbackModels)) {
+            $fallbackModels = [];
+        }
+
+        if ($provider !== 'gemini' || ! str_contains($model, 'gemma') || ! isset($fallbackModels[0])) {
+            return $options;
+        }
+
+        $options['model'] = (string) $fallbackModels[0];
+        $options['fallback_models'] = array_values(array_slice($fallbackModels, 1));
+        $options['thinking_budget'] = 0;
+        $options['max_tokens'] = $this->resolveFallbackContinuationMaxTokens($generationType, $maxTokens);
+
+        return $options;
+    }
+
+    private function resolveFallbackContinuationMaxTokens(string $generationType, int $maxTokens): int
+    {
+        $configuredTokens = match ($generationType) {
+            'prd' => (int) config('services.ai.prd_max_tokens', 2800),
+            'next-step' => (int) config('services.ai.next_step_max_tokens', 1800),
+            'coding-prompt' => (int) config('services.ai.coding_prompt_max_tokens', 1400),
+            default => (int) config('services.ai.max_tokens', 1600),
+        };
+
+        return max($maxTokens, $configuredTokens);
+    }
+
+    private function isPrdContentTooThin(bool $compactMode, string $markdown): bool
+    {
+        $issues = $this->detectPrdCoverageIssues($compactMode, $markdown);
+
+        return $issues !== [];
+    }
+
+    private function buildPrdContinuationFocus(bool $compactMode, string $markdown): string
+    {
+        $issues = $this->detectPrdCoverageIssues($compactMode, $markdown);
+
+        if ($issues === []) {
+            return '';
+        }
+
+        return implode("\n- ", $issues);
+    }
+
+    /**
+     * @return array{data_model: bool, api_design: bool}
+     */
+    private function detectPrdCoverageGaps(bool $compactMode, string $markdown): array
+    {
+        $dataModelHeading = $compactMode ? '## 8. Data Model & ERD' : '## 20. Data Model & ERD';
+        $apiHeading = $compactMode ? '## 9. API Design' : '## 21. API Design';
+        $nextHeading = $compactMode ? '## 10. UI Pages / Screens' : '## 22. UI Pages / Screens';
+
+        $dataModelSection = $this->extractSectionMarkdown($markdown, $dataModelHeading, $apiHeading);
+        $apiSection = $this->extractSectionMarkdown($markdown, $apiHeading, $nextHeading);
+
+        $entityCount = preg_match_all('/^#{3,4}\s+[A-Z][A-Z0-9_ -]{2,}\s*$/m', $dataModelSection);
+        $entityTypeCount = preg_match_all('/^\*\*Entity Type:\*\*\s*.+$/mi', $dataModelSection);
+        $fieldTableCount = preg_match_all('/^\|\s*Field\s*\|\s*Type\s*\|\s*Required\s*\|\s*Nullable\s*\|\s*Default\s*\|\s*Unique\s*\|\s*Indexed\s*\|\s*Example\s*\|\s*Validation\s*\|\s*Description\s*\|/mi', $dataModelSection);
+        $relatedApiCount = preg_match_all('/^\*\*Related APIs:\*\*\s*$/mi', $dataModelSection);
+        $indexesCount = preg_match_all('/^\*\*Indexes:\*\*\s*$/mi', $dataModelSection);
+
+        $endpointHeadingCount = preg_match_all('/^####\s+(GET|POST|PUT|PATCH|DELETE)\s+\/api\/v\d+\/.+$/mi', $apiSection);
+        $endpointBulletCount = preg_match_all('/^\s*[-*]\s+(GET|POST|PUT|PATCH|DELETE)\s+`?\/api\/v\d+\/.+$/mi', $apiSection);
+        $apiModuleCount = preg_match_all('/^###\s+.+API\s*$/mi', $apiSection);
+        $purposeCount = preg_match_all('/^\*\*Purpose:\*\*\s*.+$/mi', $apiSection);
+        $requestBodyCount = preg_match_all('/^\*\*Request Body:\*\*\s*$/mi', $apiSection);
+        $successResponseCount = preg_match_all('/^\*\*Success Response:\*\*\s*$/mi', $apiSection);
+        $errorResponsesCount = preg_match_all('/^\*\*Error Responses:\*\*\s*$/mi', $apiSection);
+        $businessRulesCount = preg_match_all('/^\*\*Business Rules:\*\*\s*$/mi', $apiSection);
+        $relatedDataModelCount = preg_match_all('/^\*\*Related Data Model:\*\*\s*$/mi', $apiSection);
+        $jsonResponseBlockCount = preg_match_all('/```json[\s\S]*?```/mi', $apiSection);
+        $totalEndpointCount = $endpointHeadingCount + $endpointBulletCount;
+
+        $minimumEntities = $compactMode ? 4 : 6;
+        $minimumEndpoints = $compactMode ? 8 : 12;
+        $minimumModules = $compactMode ? 3 : 5;
+        $minimumDetailedEndpoints = $compactMode ? 4 : 7;
+
+        $dataModelThin =
+            $entityCount < $minimumEntities ||
+            $entityTypeCount < $minimumEntities ||
+            $fieldTableCount < $minimumEntities ||
+            $relatedApiCount < $minimumEntities ||
+            $indexesCount < $minimumEntities;
+
+        $apiDesignThin =
+            $totalEndpointCount < $minimumEndpoints ||
+            $apiModuleCount < $minimumModules ||
+            $purposeCount < $minimumDetailedEndpoints ||
+            $requestBodyCount < $minimumDetailedEndpoints ||
+            $successResponseCount < $minimumDetailedEndpoints ||
+            $errorResponsesCount < $minimumDetailedEndpoints ||
+            $businessRulesCount < $minimumDetailedEndpoints ||
+            $relatedDataModelCount < $minimumDetailedEndpoints ||
+            $jsonResponseBlockCount < ($compactMode ? 3 : 5) ||
+            (
+                $apiSection !== '' &&
+                preg_match('/^###\s+API Overview\s*$/mi', $apiSection) === 1 &&
+                $totalEndpointCount <= 2
+            );
+
+        return [
+            'data_model' => $dataModelThin,
+            'api_design' => $apiDesignThin,
+        ];
+    }
+
+    private function buildPrdContinuationSnapshot(string $markdown): string
+    {
+        $headingMatches = [];
+        preg_match_all('/^#{1,4}\s+.+$/m', $markdown, $headingMatches);
+        $headingList = array_slice($headingMatches[0] ?? [], 0, 60);
+
+        $dataModelSection = $this->extractPrdSectionByTitle($markdown, 'Data Model & ERD', 'API Design');
+        $apiSection = $this->extractPrdSectionByTitle($markdown, 'API Design', 'UI Pages / Screens');
+        $tailExcerpt = $this->truncatePromptExcerpt($markdown, 3500, false);
+
+        return trim(implode("\n\n", array_filter([
+            $headingList !== [] ? "Existing heading map:\n".implode("\n", $headingList) : null,
+            $dataModelSection !== '' ? "Current Data Model & ERD snapshot:\n".$this->truncatePromptExcerpt($dataModelSection, 7000) : null,
+            $apiSection !== '' ? "Current API Design snapshot:\n".$this->truncatePromptExcerpt($apiSection, 9000) : null,
+            $tailExcerpt !== '' ? "Latest document tail:\n".$tailExcerpt : null,
+        ])));
+    }
+
+    private function generatePrdSectionReplacement(
+        Project $project,
+        string $sectionTitle,
+        bool $compactMode,
+        string $markdown,
+        int $maxTokens,
+    ): ?string {
+        $snapshot = $this->buildPrdSectionRevisionSnapshot($markdown, $sectionTitle, $compactMode);
+        $prompt = $this->promptService->buildPrdSectionCompletionPrompt(
+            $project,
+            $sectionTitle,
+            $snapshot,
+            $compactMode
+        );
+        $result = $this->aiService->generateMarkdown(
+            $prompt,
+            $this->targetedPrdSectionAiOptions($sectionTitle, $maxTokens)
+        );
+
+        $replacement = trim((string) ($result['markdown_content'] ?? ''));
+
+        return $replacement !== '' ? $replacement : null;
+    }
+
+    private function buildPrdSectionRevisionSnapshot(string $markdown, string $sectionTitle, bool $compactMode): string
+    {
+        $headingMatches = [];
+        preg_match_all('/^#{1,4}\s+.+$/m', $markdown, $headingMatches);
+        $headingList = array_slice($headingMatches[0] ?? [], 0, 80);
+        $sectionSnapshot = $sectionTitle === 'Data Model & ERD'
+            ? $this->extractPrdSectionByTitle($markdown, 'Data Model & ERD', 'API Design')
+            : $this->extractPrdSectionByTitle($markdown, 'API Design', 'UI Pages / Screens');
+        $dataModelSection = $sectionTitle === 'API Design'
+            ? $this->extractPrdSectionByTitle($markdown, 'Data Model & ERD', 'API Design')
+            : '';
+
+        return trim(implode("\n\n", array_filter([
+            $headingList !== [] ? "Existing heading map:\n".implode("\n", $headingList) : null,
+            $sectionSnapshot !== '' ? "Current {$sectionTitle} snapshot:\n".$this->truncatePromptExcerpt($sectionSnapshot, 12000) : null,
+            $dataModelSection !== '' ? "Current Data Model & ERD reference:\n".$this->truncatePromptExcerpt($dataModelSection, 8000) : null,
+            "Mode: ".($compactMode ? 'compact' : 'normal'),
+        ])));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function targetedPrdSectionAiOptions(string $sectionTitle, int $maxTokens): array
+    {
+        $sectionMaxTokens = $sectionTitle === 'API Design'
+            ? min(max($maxTokens, 2200), 3200)
+            : min(max($maxTokens, 2000), 2800);
+
+        $options = [
+            'max_tokens' => $sectionMaxTokens,
+        ];
+
+        $runtimeConfig = $this->aiService->runtimeConfig();
+        $provider = strtolower((string) ($runtimeConfig['provider'] ?? ''));
+        $model = strtolower((string) ($runtimeConfig['model'] ?? ''));
+        $fallbackModels = $runtimeConfig['fallback_models'] ?? [];
+
+        if (! is_array($fallbackModels)) {
+            $fallbackModels = [];
+        }
+
+        if ($provider === 'gemini' && str_contains($model, 'gemma') && isset($fallbackModels[0])) {
+            $options['model'] = (string) $fallbackModels[0];
+            $options['fallback_models'] = array_values(array_slice($fallbackModels, 1));
+            $options['thinking_budget'] = 0;
+        }
+
+        return $options;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function detectPrdCoverageIssues(bool $compactMode, string $markdown): array
+    {
+        $issues = [];
+        $dataModelHeading = $compactMode ? '## 8. Data Model & ERD' : '## 20. Data Model & ERD';
+        $apiHeading = $compactMode ? '## 9. API Design' : '## 21. API Design';
+        $nextHeading = $compactMode ? '## 10. UI Pages / Screens' : '## 22. UI Pages / Screens';
+
+        $dataModelSection = $this->extractSectionMarkdown($markdown, $dataModelHeading, $apiHeading);
+        $apiSection = $this->extractSectionMarkdown($markdown, $apiHeading, $nextHeading);
+
+        $entityCount = preg_match_all('/^#{3,4}\s+[A-Z][A-Z0-9_ -]{2,}\s*$/m', $dataModelSection);
+        $entityTypeCount = preg_match_all('/^\*\*Entity Type:\*\*\s*.+$/mi', $dataModelSection);
+        $fieldTableCount = preg_match_all('/^\|\s*Field\s*\|\s*Type\s*\|\s*Required\s*\|\s*Nullable\s*\|\s*Default\s*\|\s*Unique\s*\|\s*Indexed\s*\|\s*Example\s*\|\s*Validation\s*\|\s*Description\s*\|/mi', $dataModelSection);
+        $relatedApiCount = preg_match_all('/^\*\*Related APIs:\*\*\s*$/mi', $dataModelSection);
+        $indexesCount = preg_match_all('/^\*\*Indexes:\*\*\s*$/mi', $dataModelSection);
+        $endpointHeadingCount = preg_match_all('/^####\s+(GET|POST|PUT|PATCH|DELETE)\s+\/api\/v\d+\/.+$/mi', $apiSection);
+        $endpointBulletCount = preg_match_all('/^\s*[-*]\s+(GET|POST|PUT|PATCH|DELETE)\s+`?\/api\/v\d+\/.+$/mi', $apiSection);
+        $apiModuleCount = preg_match_all('/^###\s+.+API\s*$/mi', $apiSection);
+        $purposeCount = preg_match_all('/^\*\*Purpose:\*\*\s*.+$/mi', $apiSection);
+        $requestBodyCount = preg_match_all('/^\*\*Request Body:\*\*\s*$/mi', $apiSection);
+        $successResponseCount = preg_match_all('/^\*\*Success Response:\*\*\s*$/mi', $apiSection);
+        $errorResponsesCount = preg_match_all('/^\*\*Error Responses:\*\*\s*$/mi', $apiSection);
+        $businessRulesCount = preg_match_all('/^\*\*Business Rules:\*\*\s*$/mi', $apiSection);
+        $relatedDataModelCount = preg_match_all('/^\*\*Related Data Model:\*\*\s*$/mi', $apiSection);
+        $jsonResponseBlockCount = preg_match_all('/```json[\s\S]*?```/mi', $apiSection);
+
+        $minimumEntities = $compactMode ? 4 : 6;
+        $minimumEndpoints = $compactMode ? 8 : 12;
+        $minimumModules = $compactMode ? 3 : 5;
+        $totalEndpointCount = $endpointHeadingCount + $endpointBulletCount;
+
+        if ($entityCount < $minimumEntities) {
+            $issues[] = "Section Data Dictionary masih terlalu tipis. Tambahkan minimal {$minimumEntities} entity inti yang benar-benar dibutuhkan sistem dan jabarkan masing-masing dengan lengkap.";
+        }
+
+        if ($entityTypeCount < $minimumEntities) {
+            $issues[] = 'Setiap entity di Data Dictionary wajib menjelaskan jenis entity seperti Master, Transaction, Event Log, Configuration, Reference, Join, Analytics, atau System.';
+        }
+
+        if ($fieldTableCount < $minimumEntities) {
+            $issues[] = 'Setiap entity di Data Dictionary harus punya field specification table lengkap, bukan hanya ringkasan field singkat.';
+        }
+
+        if ($relatedApiCount < $minimumEntities || $indexesCount < $minimumEntities) {
+            $issues[] = 'Setiap entity di Data Dictionary harus menjelaskan Indexes, Related APIs, dan relasi penting agar kebutuhan backend serta database benar-benar ter-cover.';
+        }
+
+        if ($totalEndpointCount < $minimumEndpoints) {
+            $issues[] = "Section API Design masih terlalu sedikit. Tambahkan minimal {$minimumEndpoints} endpoint realistis yang menutup semua proses sistem backend.";
+        }
+
+        if ($apiModuleCount < $minimumModules) {
+            $issues[] = "API Design harus dibagi ke lebih banyak modul bisnis. Tambahkan minimal {$minimumModules} modul API yang sesuai kebutuhan sistem.";
+        }
+
+        if ($totalEndpointCount > 0) {
+            $minimumDetailedEndpoints = $compactMode ? 4 : 7;
+
+            if (
+                $purposeCount < $minimumDetailedEndpoints ||
+                $requestBodyCount < $minimumDetailedEndpoints ||
+                $successResponseCount < $minimumDetailedEndpoints ||
+                $errorResponsesCount < $minimumDetailedEndpoints ||
+                $businessRulesCount < $minimumDetailedEndpoints ||
+                $relatedDataModelCount < $minimumDetailedEndpoints
+            ) {
+                $issues[] = 'Endpoint API masih terlalu ringkas. Dokumentasikan lebih banyak endpoint dengan Purpose, Request Body, Success Response, Error Responses, Business Rules, dan Related Data Model.';
+            }
+        }
+
+        if ($jsonResponseBlockCount < ($compactMode ? 3 : 5)) {
+            $issues[] = 'API Design harus menampilkan lebih banyak contoh kontrak response JSON yang realistis, bukan hanya overview atau satu dua response singkat.';
+        }
+
+        if ($apiSection !== '' && preg_match('/^###\s+API Overview\s*$/mi', $apiSection) === 1 && $totalEndpointCount <= 2) {
+            $issues[] = 'API Design tidak boleh berhenti di API Overview. Lanjutkan seluruh proses API per modul sampai lengkap untuk kebutuhan backend dan database.';
+        }
+
+        return $issues;
+    }
+
+    private function extractPrdSectionByTitle(string $markdown, string $startTitle, string $nextTitle): string
+    {
+        $content = trim($markdown);
+
+        if ($content === '') {
+            return '';
+        }
+
+        $pattern = '/^##\s*(?:\d+\.\s*)?'.preg_quote($startTitle, '/').'\s*$([\s\S]*?)(?=^##\s*(?:\d+\.\s*)?'.preg_quote($nextTitle, '/').'\s*$|\z)/mi';
+
+        if (preg_match($pattern, $content, $matches) !== 1) {
+            return '';
+        }
+
+        return trim($matches[1] ?? '');
+    }
+
+    private function extractSectionMarkdown(string $markdown, string $startHeading, string $nextHeading): string
+    {
+        $content = trim($markdown);
+
+        if ($content === '' || ! $this->markdownContainsHeading($content, $startHeading)) {
+            return '';
+        }
+
+        $pattern = '/^'.preg_quote($startHeading, '/').'\s*$([\s\S]*?)(?=^'.preg_quote($nextHeading, '/').'\s*$|\z)/mi';
+
+        if (preg_match($pattern, $content, $matches) !== 1) {
+            $startTitle = $this->headingTitle($startHeading);
+            $nextTitle = $this->headingTitle($nextHeading);
+            $fallbackPattern = '/^##\s*(?:\d+\.\s*)?'.preg_quote($startTitle, '/').'\s*$([\s\S]*?)(?=^##\s*(?:\d+\.\s*)?'.preg_quote($nextTitle, '/').'\s*$|\z)/mi';
+
+            if (preg_match($fallbackPattern, $content, $matches) !== 1) {
+                return '';
+            }
+        }
+
+        return trim($matches[1] ?? '');
+    }
+
+    private function headingTitle(string $heading): string
+    {
+        $title = preg_replace('/^#+\s*/', '', trim($heading)) ?? trim($heading);
+        $title = preg_replace('/^\d+\.\s*/', '', $title) ?? $title;
+
+        return trim($title);
+    }
+
+    private function truncatePromptExcerpt(string $value, int $maxChars, bool $fromStart = true): string
+    {
+        $content = trim($value);
+
+        if ($content === '') {
+            return '';
+        }
+
+        $length = function_exists('mb_strlen') ? mb_strlen($content) : strlen($content);
+
+        if ($length <= $maxChars) {
+            return $content;
+        }
+
+        if ($fromStart) {
+            $slice = function_exists('mb_substr') ? mb_substr($content, 0, $maxChars) : substr($content, 0, $maxChars);
+
+            return rtrim($slice)."\n...[excerpt truncated]...";
+        }
+
+        $offset = max(0, $length - $maxChars);
+        $slice = function_exists('mb_substr') ? mb_substr($content, $offset) : substr($content, $offset);
+
+        return "...[excerpt truncated]...\n".ltrim($slice);
+    }
+
+    private function mergeMarkdownSegments(string $partialMarkdown, string $continuationMarkdown): string
+    {
+        $partial = trim($partialMarkdown);
+        $continuation = trim($continuationMarkdown);
+
+        if ($partial === '') {
+            return $continuation;
+        }
+
+        if ($continuation === '') {
+            return $partial;
+        }
+
+        $continuation = preg_replace('/^# .+\n+/u', '', $continuation, 1) ?? $continuation;
+
+        return trim($partial."\n\n".$continuation);
+    }
+
+    private function replacePrdSectionByTitle(
+        string $markdown,
+        string $startTitle,
+        string $nextTitle,
+        string $replacementMarkdown,
+    ): string {
+        $content = trim($markdown);
+        $replacement = trim($replacementMarkdown);
+
+        if ($content === '' || $replacement === '') {
+            return $content;
+        }
+
+        $pattern = '/^##\s*(?:\d+\.\s*)?'.preg_quote($startTitle, '/').'\s*$[\s\S]*?(?=^##\s*(?:\d+\.\s*)?'.preg_quote($nextTitle, '/').'\s*$|\z)/mi';
+        $updated = preg_replace($pattern, $replacement."\n\n", $content, 1);
+
+        if (is_string($updated) && $updated !== '') {
+            return trim($updated);
+        }
+
+        return trim($content."\n\n".$replacement);
+    }
+
+    /**
      * @param  array<string, mixed>  $validated
      */
     private function createProjectFromUploadedPrd(array $validated, string $uploadedPrdFilename, string $uploadedPrdMarkdown): Project
@@ -659,14 +1457,15 @@ class GenerateController extends Controller
             $uploadedPrdMarkdown,
             'Uploaded PRD'
         );
+        $derivedTechStack = $this->extractTechStackFromMarkdown($uploadedPrdMarkdown);
 
         return Project::query()->create([
             'project_name' => $derivedProjectName,
             'project_idea' => 'Next Step Planner generated from uploaded PRD markdown.',
             'target_user' => null,
             'main_problem' => null,
-            'app_type' => 'Web Application',
-            'tech_stack' => 'Next.js, Laravel, MongoDB',
+            'app_type' => null,
+            'tech_stack' => $derivedTechStack,
             'skill_level' => 'Beginner',
             'initial_prd' => null,
         ]);
@@ -809,17 +1608,55 @@ class GenerateController extends Controller
             $uploadedNextStepMarkdown,
             'Uploaded Next Step Planner'
         );
+        $derivedTechStack = $this->extractTechStackFromMarkdown($uploadedNextStepMarkdown);
 
         return Project::query()->create([
             'project_name' => $derivedProjectName,
             'project_idea' => 'Coding Prompt Generator generated from uploaded Next Step Planner markdown.',
             'target_user' => null,
             'main_problem' => null,
-            'app_type' => 'Web Application',
-            'tech_stack' => 'Next.js, Laravel, MongoDB',
+            'app_type' => null,
+            'tech_stack' => $derivedTechStack,
             'skill_level' => 'Beginner',
             'initial_prd' => null,
         ]);
+    }
+
+    private function extractTechStackFromMarkdown(string $markdown): ?string
+    {
+        $normalized = str_replace(["\r\n", "\r"], "\n", $markdown);
+        $frontend = $this->matchMarkdownField($normalized, ['frontend']);
+        $backend = $this->matchMarkdownField($normalized, ['backend']);
+        $database = $this->matchMarkdownField($normalized, ['database', 'db']);
+        $segments = array_values(array_filter([
+            $frontend !== null ? 'Frontend: '.$frontend : null,
+            $backend !== null ? 'Backend: '.$backend : null,
+            $database !== null ? 'Database: '.$database : null,
+        ]));
+
+        if ($segments === []) {
+            return null;
+        }
+
+        return implode(', ', $segments);
+    }
+
+    /**
+     * @param  array<int, string>  $labels
+     */
+    private function matchMarkdownField(string $markdown, array $labels): ?string
+    {
+        foreach ($labels as $label) {
+            $pattern = '/(?:^|\n)\s*(?:[-*]\s*)?'.preg_quote($label, '/').'\s*[:=-]\s*(.+)$/im';
+            if (preg_match($pattern, $markdown, $matches) === 1) {
+                $value = trim((string) ($matches[1] ?? ''));
+                if ($value !== '') {
+                    return $value;
+                }
+            }
+        }
+
+        return null;
     }
 
     private function resolveUploadedProjectName(string $uploadedFilename, string $markdown, string $fallback): string

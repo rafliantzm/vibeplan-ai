@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\TeamMember;
+use App\Support\DatabaseErrorResponder;
 use Illuminate\Http\JsonResponse;
 use Throwable;
 
@@ -12,9 +13,7 @@ class TeamMemberController extends Controller
     public function index(): JsonResponse
     {
         if (! extension_loaded('mongodb')) {
-            return response()->json([
-                'message' => 'MongoDB PHP extension is not installed. Install ext-mongodb before using the team member endpoint.',
-            ], 500);
+            return DatabaseErrorResponder::extensionMissing('team member endpoint');
         }
 
         try {
@@ -26,9 +25,12 @@ class TeamMemberController extends Controller
         } catch (Throwable $exception) {
             report($exception);
 
-            return response()->json([
-                'message' => 'Failed to fetch team members.',
-            ], 500);
+            return DatabaseErrorResponder::isMongoConnectivityError($exception)
+                ? DatabaseErrorResponder::mongoUnavailable($exception, 'Database sedang tidak dapat diakses saat memuat data tim.')
+                : response()->json([
+                    'success' => false,
+                    'message' => 'Failed to fetch team members.',
+                ], 500);
         }
     }
 }

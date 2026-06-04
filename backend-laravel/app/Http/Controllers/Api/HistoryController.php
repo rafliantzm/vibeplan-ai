@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AiGeneration;
 use App\Services\MarkdownService;
 use App\Services\UserActivityLogger;
+use App\Support\DatabaseErrorResponder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -32,9 +33,7 @@ class HistoryController extends Controller
         }
 
         if (! extension_loaded('mongodb')) {
-            return response()->json([
-                'message' => 'MongoDB PHP extension is not installed. Install ext-mongodb before using the history endpoints.',
-            ], 500);
+            return DatabaseErrorResponder::extensionMissing('history endpoints');
         }
 
         $validated = $request->validate([
@@ -62,9 +61,12 @@ class HistoryController extends Controller
         } catch (Throwable $exception) {
             report($exception);
 
-            return response()->json([
-                'message' => 'Failed to fetch generation history.',
-            ], 500);
+            return DatabaseErrorResponder::isMongoConnectivityError($exception)
+                ? DatabaseErrorResponder::mongoUnavailable($exception, 'Database sedang tidak dapat diakses saat memuat history.')
+                : response()->json([
+                    'success' => false,
+                    'message' => 'Failed to fetch generation history.',
+                ], 500);
         }
     }
 
@@ -81,9 +83,7 @@ class HistoryController extends Controller
         }
 
         if (! extension_loaded('mongodb')) {
-            return response()->json([
-                'message' => 'MongoDB PHP extension is not installed. Install ext-mongodb before using the history endpoints.',
-            ], 500);
+            return DatabaseErrorResponder::extensionMissing('history endpoints');
         }
 
         try {
@@ -104,9 +104,12 @@ class HistoryController extends Controller
         } catch (Throwable $exception) {
             report($exception);
 
-            return response()->json([
-                'message' => 'Failed to fetch generation history detail.',
-            ], 500);
+            return DatabaseErrorResponder::isMongoConnectivityError($exception)
+                ? DatabaseErrorResponder::mongoUnavailable($exception, 'Database sedang tidak dapat diakses saat memuat detail history.')
+                : response()->json([
+                    'success' => false,
+                    'message' => 'Failed to fetch generation history detail.',
+                ], 500);
         }
     }
 
@@ -123,9 +126,7 @@ class HistoryController extends Controller
         }
 
         if (! extension_loaded('mongodb')) {
-            return response()->json([
-                'message' => 'MongoDB PHP extension is not installed. Install ext-mongodb before using the download endpoint.',
-            ], 500);
+            return DatabaseErrorResponder::extensionMissing('download endpoint');
         }
 
         try {
@@ -158,9 +159,12 @@ class HistoryController extends Controller
         } catch (Throwable $exception) {
             report($exception);
 
-            return response()->json([
-                'message' => 'Failed to download markdown file.',
-            ], 500);
+            return DatabaseErrorResponder::isMongoConnectivityError($exception)
+                ? DatabaseErrorResponder::mongoUnavailable($exception, 'Database sedang tidak dapat diakses saat menyiapkan file Markdown.')
+                : response()->json([
+                    'success' => false,
+                    'message' => 'Failed to download markdown file.',
+                ], 500);
         }
     }
 
@@ -177,9 +181,7 @@ class HistoryController extends Controller
         }
 
         if (! extension_loaded('mongodb')) {
-            return response()->json([
-                'message' => 'MongoDB PHP extension is not installed. Install ext-mongodb before using the history endpoints.',
-            ], 500);
+            return DatabaseErrorResponder::extensionMissing('history endpoints');
         }
 
         try {
@@ -216,9 +218,12 @@ class HistoryController extends Controller
         } catch (Throwable $exception) {
             report($exception);
 
-            return response()->json([
-                'message' => 'Failed to delete generation history.',
-            ], 500);
+            return DatabaseErrorResponder::isMongoConnectivityError($exception)
+                ? DatabaseErrorResponder::mongoUnavailable($exception, 'Database sedang tidak dapat diakses saat menghapus history.')
+                : response()->json([
+                    'success' => false,
+                    'message' => 'Failed to delete generation history.',
+                ], 500);
         }
     }
 }

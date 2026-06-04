@@ -38,6 +38,10 @@ export function getGenerationBadgeClass(type) {
 }
 
 export function getErrorMessage(error) {
+  if (error?.userMessage) {
+    return error.userMessage;
+  }
+
   if (error?.errorCode) {
     switch (error.errorCode) {
       case "REQUEST_TIMEOUT":
@@ -47,13 +51,22 @@ export function getErrorMessage(error) {
       case "INPUT_TOO_LARGE":
         return "File PRD terlalu panjang untuk diproses dalam mode normal. Gunakan Mode Ringkas atau upload PRD yang lebih pendek.";
       case "AI_KEY_INVALID":
-        return "API key tidak valid atau tidak memiliki akses model.";
+        return "API key provider AI salah, kosong, atau belum terbaca dari backend.";
+      case "AI_ACCESS_DENIED":
+        return "Akses ke provider AI ditolak. API key mungkin valid, tetapi model atau project belum diizinkan.";
+      case "MODEL_NOT_FOUND":
       case "MODEL_NOT_ALLOWED":
-        return "API key valid, tetapi model tidak diizinkan pada project Groq ini.";
+        return "Model AI tidak ditemukan atau tidak tersedia untuk provider yang dipilih.";
       case "AI_PROVIDER_UNREACHABLE":
-        return "Provider AI sedang tidak bisa dijangkau.";
+        return "Provider AI sedang tidak bisa dijangkau atau terlalu lambat merespons.";
       case "PROVIDER_LIMIT":
         return "Provider AI sedang terkena limit. Coba lagi nanti atau gunakan mode ringkas.";
+      case "DATABASE_CONNECTION_FAILED":
+        return "Database belum tersambung. Periksa konfigurasi MongoDB Atlas atau coba beberapa saat lagi.";
+      case "DATABASE_DRIVER_MISSING":
+        return "MongoDB PHP extension belum aktif di backend.";
+      case "NETWORK_ERROR":
+        return "Backend belum dapat dijangkau. Pastikan server Laravel aktif dan coba lagi.";
       default:
         break;
     }

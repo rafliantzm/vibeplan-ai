@@ -37,6 +37,7 @@ const SELECTED_CARD_CLASS =
   "border-slate-950 bg-slate-950 text-white shadow-lg shadow-slate-950/15";
 const DEFAULT_CARD_CLASS =
   "border-slate-200 bg-white text-slate-900 hover:border-sky-200 hover:bg-sky-50/50 hover:shadow-md";
+const PROJECT_IDEA_MAX_LENGTH = 15000;
 
 export default function GeneratorForm({
   generationType,
@@ -244,8 +245,12 @@ export default function GeneratorForm({
               value={form.project_idea}
               onChange={onChange}
               placeholder="Jelaskan ide aplikasi yang ingin dibangun."
+              maxLength={PROJECT_IDEA_MAX_LENGTH}
               required
             />
+            <p className="mt-2 text-right text-xs text-slate-500">
+              {form.project_idea.length.toLocaleString("id-ID")} / {PROJECT_IDEA_MAX_LENGTH.toLocaleString("id-ID")} karakter
+            </p>
           </div>
 
           <div className="mt-5">

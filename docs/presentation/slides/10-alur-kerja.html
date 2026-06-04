@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="../shared.css">
+<title>Alur Kerja Aplikasi</title>
+</head>
+<body>
+<div class="canvas">
+  <div class="frame-line"></div>
+  <p class="kicker">Slide 10 · Alur Kerja Aplikasi</p>
+  <h1 class="section-title" style="margin-top: 10pt;">Alur dari Ide Project sampai Dokumen Siap Pakai</h1>
+  <div class="divider"></div>
+
+  <div class="grid-2" style="margin-top: 18px;">
+    <div class="stack">
+      <div class="feature-step">
+        <div class="index"><p>1</p></div>
+        <div class="body">
+          <h4>User mengisi brief project.</h4>
+          <p>Form memuat nama project, ide, target user, masalah utama, app type, tech stack, dan catatan awal.</p>
+        </div>
+      </div>
+      <div class="feature-step">
+        <div class="index"><p>2</p></div>
+        <div class="body">
+          <h4>Frontend mengirim request ke backend.</h4>
+          <p>Request dikirim sesuai mode: PRD Generator, Next Step Planner, atau Coding Prompt Generator.</p>
+        </div>
+      </div>
+      <div class="feature-step">
+        <div class="index"><p>3</p></div>
+        <div class="body">
+          <h4>Backend menyusun prompt dan memanggil AI.</h4>
+          <p>Backend mengelola model, provider, validasi, fallback, dan response handling.</p>
+        </div>
+      </div>
+      <div class="feature-step">
+        <div class="index"><p>4</p></div>
+        <div class="body">
+          <h4>Hasil dikembalikan, disimpan, dan bisa diunduh.</h4>
+          <p>Dokumen tampil di result page, masuk history, dan dapat diunduh sebagai Markdown.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="stack">
+      <div class="browser-card slide-shot-compact">
+        <div class="browser-top">
+          <div class="dot"></div>
+          <div class="dot alt"></div>
+          <div class="dot third"></div>
+          <p>Halaman Generate</p>
+        </div>
+        <img class="shot" src="../../../screenshot/generate.png" alt="Generate page">
+      </div>
+      <div class="flow">
+        <div class="flow-box"><p><strong>Input</strong><br>Brief project</p></div>
+        <div class="flow-arrow"></div>
+        <div class="flow-box"><p><strong>Process</strong><br>Prompt orchestration</p></div>
+        <div class="flow-arrow"></div>
+        <div class="flow-box"><p><strong>Output</strong><br>Result &amp; history</p></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer-note">
+    <p>Flow ini menunjukkan bahwa VibePlan AI adalah web app fungsional, bukan sekadar prototype.</p>
+    <p>10</p>
+  </div>
+</div>
+</body>
+</html>
